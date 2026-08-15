@@ -1,0 +1,167 @@
+"""LLM 客户端：DeepSeek（OpenAI 兼容 /chat/completions），纯 requests 实现。
+
+能力：
+- chat(messages) -> str：普通对话
+- chat_json(messages) -> dict|list：要求结构化 JSON 输出并稳健解析
+- 统计 usage（输入/输出 token）与耗时，供评测与成本估算
+"""
+from __future__ import annotations
+
+import json
+import re
+import time
+from dataclasses import dataclass, field
+
+import requests
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+@dataclass
+class ChatResult:
+    text: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency_s: float = 0.0
+    raw: dict = field(default_factory=dict)
+
+
+class LLMClient:
+    def __init__(self, config, base_url: str | None = None, api_key: str | None = None):
+        self.config = config
+        self.base_url = (base_url or config.llm_base_url).rstrip("/")
+        self.api_key = api_key if api_key is not None else config.llm_api_key
+        if not self.api_key:
+            raise LLMError(
+                "未找到 DEEPSEEK_API_KEY。请在项目根目录创建 .env（参考 .env.example）"
+                "并填入你的 DeepSeek API Key。"
+            )
+
+    @classmethod
+    def for_vision(cls, config) -> "LLMClient":
+        """视觉模型客户端（图片搜索）。未配置时抛错提示。"""
+        if not config.vision_model:
+            raise LLMError(
+                "尚未配置视觉模型。请到 设置 → 视觉模型 填写 model（如 glm-4v-flash / qwen-vl-plus / gpt-4o）"
+                "与 base_url、API Key。"
+            )
+        return cls(config, base_url=config.vision_base_url, api_key=config.vision_api_key)
+
+    def describe_image(self, image_data_url: str, question: str = "") -> str:
+        """用视觉模型描述图片内容（用于图片检索/问答）。"""
+        prompt = (
+            "请仔细描述这张图片的内容：画面主体、文字、图表、界面元素、场景等，尽量具体、客观。"
+            "如果图中包含文字或代码，请完整转录。"
+            + (f"\n用户针对图片的补充问题：{question}" if question else "")
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                ],
+            }
+        ]
+        result = self._chat(messages, model=self.config.vision_model, temperature=0.2, max_tokens=1024)
+        return result.text
+
+    # ---- 底层请求 ----
+    def _chat(
+        self,
+        messages: list[dict],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+    ) -> ChatResult:
+        url = f"{self.base_url}/chat/completions"
+        payload: dict = {
+            "model": model or self.config.llm_chat_model,
+            "messages": messages,
+            "temperature": temperature if temperature is not None else self.config.llm_temperature,
+            "max_tokens": max_tokens or self.config.llm_max_tokens,
+            "stream": False,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+
+        last_err: Exception | None = None
+        for attempt in range(self.config.llm_max_retries):
+            t0 = time.monotonic()
+            try:
+                resp = requests.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=self.config.llm_timeout,
+                )
+                latency = time.monotonic() - t0
+                if resp.status_code == 429:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                choice = data["choices"][0]
+                content = choice["message"].get("content") or ""
+                usage = data.get("usage", {})
+                return ChatResult(
+                    text=content.strip(),
+                    prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                    completion_tokens=int(usage.get("completion_tokens", 0)),
+                    latency_s=latency,
+                    raw=data,
+                )
+            except Exception as e:  # noqa: BLE001 - 网络/HTTP/解析统一重试
+                last_err = e
+                time.sleep(1.0 * (attempt + 1))
+        raise LLMError(f"LLM 请求失败（重试 {self.config.llm_max_retries} 次后）: {last_err}")
+
+    # ---- 公开方法 ----
+    def chat(self, messages: list[dict], **kwargs) -> ChatResult:
+        return self._chat(messages, **kwargs)
+
+    def chat_json(self, messages: list[dict], **kwargs) -> object:
+        """要求 JSON 输出并稳健解析；解析失败抛 LLMError。"""
+        use_format = self.config.llm_chat_model.startswith(("deepseek-chat", "deepseek-reasoner"))
+        result = self._chat(
+            messages,
+            response_format={"type": "json_object"} if use_format else None,
+            **kwargs,
+        )
+        return parse_json_robust(result.text)
+
+    # ---- 成本估算（DeepSeek 定价，元/百万 token） ----
+    PRICING = {"input": 1.0, "output": 2.0}  # deepseek-chat 官方定价（元/1M tokens）
+
+    @classmethod
+    def estimate_cost(cls, result: ChatResult) -> float:
+        return (result.prompt_tokens * cls.PRICING["input"] + result.completion_tokens * cls.PRICING["output"]) / 1_000_000
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+def parse_json_robust(text: str) -> object:
+    """从 LLM 输出中稳健提取 JSON：先去代码围栏，再找首尾花括号/方括号。"""
+    text = text.strip()
+    m = _JSON_FENCE_RE.search(text)
+    if m:
+        text = m.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        start, end = text.find(open_ch), text.rfind(close_ch)
+        if start != -1 and end > start:
+            try:
+                return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                continue
+    raise LLMError(f"无法从 LLM 输出解析 JSON: {text[:300]!r}")

@@ -1,0 +1,8 @@
+# 核心依赖（必需）
+numpy>=1.26
+requests>=2.31
+jieba>=0.42.1
+pyyaml>=6.0
+
+# 可选：本地中文向量模型（推荐，质量更好；不装则自动回退 TF-IDF 哈希向量）
+# sentence-transformers>=3.0

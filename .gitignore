@@ -1,0 +1,28 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Generated runtime data
+data/
+logs/
+knowledge_base/*
+!knowledge_base/.gitkeep
+benchmark/results.json
+benchmark/results.md
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp

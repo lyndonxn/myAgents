@@ -1,0 +1,65 @@
+# ================= myAgents 全局配置 =================
+
+# 知识库路径（Obsidian 仓库或任意 Markdown 目录）
+kb_path: "knowledge_base"
+
+# 索引与运行时数据目录（相对项目根）
+data_dir: "data"
+
+# 分片参数（父子分块）
+chunking:
+  min_chars: 80          # 低于此长度的父块丢弃
+  max_chars: 1200        # 父块最大字符数（按标题+段落切分）
+  overlap: 100           # 父块重叠字符数
+  leaf_max_chars: 320    # 叶子最大字符数（索引粒度，供精确召回）
+  leaf_min_chars: 24     # 低于此长度的叶子并入前一段
+  contextual_augment: false  # 索引时用 LLM 给父块生成上下文摘要（Anthropic Contextual Retrieval，需 build_index --augment）
+  exclude_dirs: [".obsidian", ".claudian", ".git", "模板", "Assets", "草稿", "归档"]
+  exclude_files: [".DS_Store", "AGENTS.md"]
+
+# Embedding 配置
+embedding:
+  backend: "auto"        # auto | local | tfidf；auto 优先 local（装了 sentence-transformers），否则 tfidf
+  model: "BAAI/bge-small-zh-v1.5"   # 本地中文向量模型
+  hash_dim: 1024         # TF-IDF 哈希向量维度
+
+# 检索配置（生产级两阶段：混合召回 → 精排 → 父块扩展）
+retrieval:
+  top_k: 6               # 最终返回给生成的父块数
+  vector_weight: 0.7     # 加权融合时向量权重（fusion_mode=weighted 生效）
+  keyword_weight: 0.3    # 加权融合时 BM25 权重
+  fusion_mode: "rrf"     # rrf（默认，业界标准）| weighted
+  rerank: "auto"         # off | auto | cross_encoder | llm；auto 优先 cross_encoder（bce-reranker）
+  reranker_model: "BAAI/bge-reranker-base"  # Hugging Face 模型名，也可填写本机模型目录
+  rerank_candidates: 24  # 精排候选叶子数（召回优先，精排精筛）
+  rerank_blend: 0.7      # 最终分 = 0.7*精排分 + 0.3*召回分（防精排噪声推翻召回）
+  noise_penalty: 0.5     # 噪声来源降权（转录/字幕类章节 ×0.5，0=关闭）
+  structured_boost: 0.0  # 结构化章节轻微加分（0=关闭）
+  multi_query: false     # 是否用 LLM 生成查询变体扩展召回（更准但多 1 次 LLM 调用/题）
+
+# LLM 配置（DeepSeek，OpenAI 兼容）
+llm:
+  base_url: "https://api.deepseek.com"
+  chat_model: "deepseek-chat"
+  temperature: 0.3
+  max_tokens: 2048
+  timeout: 60            # 单次请求超时（秒）
+  max_retries: 3
+
+# 规划层配置
+planner:
+  model: "deepseek-chat"
+  temperature: 0.2
+  max_steps: 5           # 计划最大步骤数
+  fallback_direct: true  # 规划失败时退化为"直接单步检索"
+
+# 工具层配置
+tools:
+  search_default_top_k: 5
+  calculator_enabled: true
+  time_enabled: true
+  topics_enabled: true
+  web_search_enabled: true   # Web 搜索（无 Key，Bing 网页版）
+  web_search:
+    timeout: 15              # 单次请求超时（秒）
+    cache_ttl: 300           # 结果缓存时长（秒）

@@ -1,0 +1,107 @@
+[
+  {
+    "id": "q01",
+    "question": "RAG 的整体流程分为哪几个环节？",
+    "expected_keywords": ["分片", "索引", "召回", "重排", "生成"],
+    "expected_files": ["RAG 工作机制详解"],
+    "expected_sections": ["整体流程"]
+  },
+  {
+    "id": "q02",
+    "question": "为什么需要 RAG？直接给大模型发整本文档有什么问题？",
+    "expected_keywords": ["上下文窗口", "成本", "响应速度"],
+    "expected_files": ["RAG 工作机制详解"],
+    "expected_sections": ["为什么需要 RAG"]
+  },
+  {
+    "id": "q03",
+    "question": "MCP 协议解决什么问题？三个参与者分别是什么？",
+    "expected_keywords": ["MCP", "模型", "工具", "Server", "Client"],
+    "expected_files": ["MCP 用统一协议连接模型与外部工具"],
+    "expected_sections": ["三个参与者"]
+  },
+  {
+    "id": "q04",
+    "question": "Agent 和 Workflow 的核心区别是什么？",
+    "expected_keywords": ["控制流", "Workflow", "LLM"],
+    "expected_files": ["Agent 和 Workflow 的核心区别"],
+    "expected_sections": ["核心区别"]
+  },
+  {
+    "id": "q05",
+    "question": "什么是 Harness Engineering？它和 Prompt Engineering 有什么区别？",
+    "expected_keywords": ["驾驭工程", "Prompt", "Context"],
+    "expected_files": ["Harness Engineering"],
+    "expected_sections": ["三个工程概念对比"]
+  },
+  {
+    "id": "q06",
+    "question": "ReAct 的核心思想是什么？与 CoT 有什么关系？",
+    "expected_keywords": ["推理", "行动", "ReAct", "CoT"],
+    "expected_files": ["Agent 面试题"],
+    "expected_sections": ["ReAct 的核心思想"]
+  },
+  {
+    "id": "q07",
+    "question": "完整 RAG 系统包含哪些环节？Chunk 应该怎么切？",
+    "expected_keywords": ["RAG", "Chunk", "分片", "Embedding"],
+    "expected_files": ["RAG 面试题"],
+    "expected_sections": ["Chunk 应该怎么切"]
+  },
+  {
+    "id": "q08",
+    "question": "Recall 和 Rerank 有什么区别？什么是 Hybrid Search？",
+    "expected_keywords": ["Recall", "Rerank", "Hybrid Search", "混合检索"],
+    "expected_files": ["RAG 面试题"],
+    "expected_sections": ["Recall 和 Rerank"]
+  },
+  {
+    "id": "q09",
+    "question": "Agent 的 Planning 一般怎么做？Memory 应该如何设计？",
+    "expected_keywords": ["Planning", "Memory", "规划"],
+    "expected_files": ["Agent 面试题"],
+    "expected_sections": ["Agent 的 Planning"]
+  },
+  {
+    "id": "q10",
+    "question": "知识库中都有哪些主题？给我一个概览。",
+    "expected_keywords": ["RAG", "MCP", "Agent", "面试"],
+    "expected_files": [],
+    "expected_sections": []
+  },
+  {
+    "id": "h01",
+    "question": "怎么把长文档拆成适合检索的小块？",
+    "expected_keywords": ["分片", "overlap"],
+    "expected_files": ["RAG 面试题"],
+    "expected_sections": ["Chunk 应该怎么切"]
+  },
+  {
+    "id": "h02",
+    "question": "检索阶段和精排阶段有什么不同？",
+    "expected_keywords": ["召回", "重排"],
+    "expected_files": ["RAG 面试题"],
+    "expected_sections": ["Recall 和 Rerank"]
+  },
+  {
+    "id": "h03",
+    "question": "提示词工程和上下文工程的区别是什么？",
+    "expected_keywords": ["Prompt", "Context"],
+    "expected_files": ["Harness Engineering"],
+    "expected_sections": ["三个工程概念对比"]
+  },
+  {
+    "id": "h04",
+    "question": "怎么把文本片段变成向量存起来，提问时再找出最相似的？",
+    "expected_keywords": ["Embedding", "向量"],
+    "expected_files": ["RAG 工作机制详解"],
+    "expected_sections": ["整体流程"]
+  },
+  {
+    "id": "h05",
+    "question": "让模型自己决定下一步和写死固定流程，哪个更可控？",
+    "expected_keywords": ["Workflow", "Agent"],
+    "expected_files": ["Agent 和 Workflow 的核心区别"],
+    "expected_sections": ["可控性"]
+  }
+]
