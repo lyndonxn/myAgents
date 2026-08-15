@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -65,6 +66,9 @@ class Handler(BaseHTTPRequestHandler):
     lock = threading.Lock()
     building = False
     build_error = ""
+    server_ref = None
+    last_heartbeat = 0.0
+    heartbeat_seen = False
 
     # ---- 基础 ----
     def log_message(self, fmt, *args):  # 静默底层访问日志（用业务日志替代）
@@ -180,6 +184,7 @@ class Handler(BaseHTTPRequestHandler):
             agent = self.agent
             self._send_json(
                 {
+                    "api_version": 4,
                     "parents": len(agent.chunks),
                     "leaves": len(agent.leaves),
                     "backend": agent.vector_store.backend_name,
@@ -189,6 +194,7 @@ class Handler(BaseHTTPRequestHandler):
                     "kb_path": agent.config.kb_path,
                     "building": self.building,
                     "vision": agent.config.vision_configured,
+                    "llm_configured": bool(agent.config.llm_api_key),
                     "context": {
                         "prompt_tokens": agent.prompt_tokens,
                         "completion_tokens": agent.completion_tokens,
@@ -292,6 +298,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "非法访问"}, 403)
             return
         payload = self._read_payload()
+
+        if self.path == "/api/heartbeat":
+            type(self).last_heartbeat = time.monotonic()
+            type(self).heartbeat_seen = True
+            self._send_json({"ok": True})
+            return
+
+        if self.path == "/api/shutdown":
+            self._send_json({"ok": True, "message": "服务正在关闭"})
+            server = type(self).server_ref
+            if server is not None:
+                threading.Thread(target=server.shutdown, daemon=True).start()
+            return
+
         if payload is not None:
             question = str(payload.get("question", "")).strip()
             if len(question) > MAX_QUESTION_LEN:
@@ -307,6 +327,9 @@ class Handler(BaseHTTPRequestHandler):
             session_id = str(payload.get("session_id", "")).strip()
             if not question:
                 self._send_json({"error": "问题不能为空"}, 400)
+                return
+            if not self.agent.config.llm_api_key:
+                self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
                 return
             workspace = self._active_workspace()
             try:
@@ -333,6 +356,9 @@ class Handler(BaseHTTPRequestHandler):
             if not question:
                 self._send_json({"error": "问题不能为空"}, 400)
                 return
+            if not self.agent.config.llm_api_key:
+                self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
+                return
             workspace = self._active_workspace()
             try:
                 session_id = self._session_for_workspace(session_id, workspace["id"])
@@ -348,15 +374,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write((json.dumps({"event": event, **data}, ensure_ascii=False) + "\n").encode("utf-8"))
                 self.wfile.flush()
             emit("stage", name="规划与检索")
-            with self.lock:
-                self.agent.memory = self.store.memory(session_id)
-                answer = self.agent.ask(question)
-            response = self._persist_answer(session_id, workspace["id"], question, answer)
-            emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], plan=response["plan"], metrics=response["metrics"])
-            text = response["answer"]
-            for start in range(0, len(text), 24):
-                emit("delta", text=text[start:start + 24])
-            emit("done", error=response["error"])
+            try:
+                with self.lock:
+                    self.agent.memory = self.store.memory(session_id)
+                    answer = self.agent.ask(question)
+                response = self._persist_answer(session_id, workspace["id"], question, answer)
+                emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], plan=response["plan"], metrics=response["metrics"])
+                text = response["answer"]
+                for start in range(0, len(text), 24):
+                    emit("delta", text=text[start:start + 24])
+                emit("done", error=response["error"])
+            except Exception:  # noqa: BLE001 - headers already sent; keep the NDJSON stream valid
+                LOG.exception("流式问答生成失败")
+                emit("done", error="回答生成失败，请检查模型配置或查看日志")
             return
 
         if self.path == "/api/ask_image":
@@ -366,6 +396,9 @@ class Handler(BaseHTTPRequestHandler):
             image_data_url = str(payload.get("image_data_url", ""))
             question = str(payload.get("question", "")).strip()
             session_id = str(payload.get("session_id", "")).strip()
+            if not self.agent.config.llm_api_key:
+                self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
+                return
             if not image_data_url.startswith("data:image/"):
                 self._send_json({"error": "图片数据无效"}, 400)
                 return
@@ -416,6 +449,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/sessions":
+            if str((payload or {}).get("action", "")) == "delete":
+                session_id = str((payload or {}).get("session_id", "")).strip()
+                workspace_id = self._active_workspace()["id"]
+                if not session_id or not self.store.session_belongs_to(session_id, workspace_id):
+                    self._send_json({"error": "会话不存在或不属于当前工作区"}, 404)
+                    return
+                self.store.delete_session(session_id)
+                self._send_json({"ok": True})
+                return
             workspace_id = str((payload or {}).get("workspace_id") or self._active_workspace()["id"])
             if workspace_id != self._active_workspace()["id"]:
                 self._send_json({"error": "只能在当前工作区创建会话"}, 409)
@@ -608,6 +650,19 @@ def main() -> None:
     Handler.store = WebStore(config.data_dir / "webui.sqlite3")
     Handler.store.ensure_default(config.kb_path)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    Handler.server_ref = server
+    Handler.last_heartbeat = time.monotonic()
+    Handler.heartbeat_seen = False
+
+    def stop_when_browser_closes() -> None:
+        while True:
+            time.sleep(5)
+            if Handler.heartbeat_seen and time.monotonic() - Handler.last_heartbeat > 15:
+                LOG.info("页面心跳已停止，自动关闭本地服务")
+                server.shutdown()
+                return
+
+    threading.Thread(target=stop_when_browser_closes, daemon=True).start()
     url = f"http://127.0.0.1:{args.port}"
     LOG.info("前端已启动: %s", url)
     print(f"[web] 前端已启动: {url}（日志: {config.data_dir}/logs/myagents.log）")

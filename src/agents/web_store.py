@@ -108,6 +108,7 @@ class WebStore:
 
     def delete_session(self, session_id: str):
         with self._connect() as db:
+            db.execute("DELETE FROM query_events WHERE session_id=?", (session_id,))
             db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
 
     def messages(self, session_id: str):

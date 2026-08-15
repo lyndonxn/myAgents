@@ -1,0 +1,80 @@
+#!/bin/zsh
+
+set -u
+
+APP_DIR="${0:A:h}"
+PROJECT_DIR="${APP_DIR}/../../../.."
+PYTHON_BIN="${PROJECT_DIR}/.venv/bin/python"
+LOG_FILE="${PROJECT_DIR}/data/desktop-launcher.log"
+PORT=""
+URL=""
+
+notify_error() {
+  /usr/bin/osascript -e "display alert \"MYAGENTS could not start\" message \"$1\" as critical" >/dev/null
+}
+
+is_myagents() {
+  local port="$1"
+  /usr/bin/curl --silent --fail --max-time 1 "http://127.0.0.1:${port}/api/status" 2>/dev/null \
+    | /usr/bin/grep --quiet '"api_version"'
+}
+
+port_is_free() {
+  local port="$1"
+  ! /usr/sbin/lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  notify_error "Python environment is missing. Run the installation steps in README.md first."
+  exit 1
+fi
+
+# 每次双击都先关闭本项目遗留的服务，避免旧线程和旧版本占用端口。
+for candidate in {8787..8797}; do
+  if is_myagents "${candidate}"; then
+    /usr/bin/curl --silent --max-time 1 -X POST "http://127.0.0.1:${candidate}/api/shutdown" >/dev/null 2>&1 || true
+    for _ in {1..20}; do
+      port_is_free "${candidate}" && break
+      /bin/sleep 0.1
+    done
+  fi
+  # 状态接口卡死时，按工作目录确认归属后再结束，绝不处理其他项目。
+  for pid in $(/usr/sbin/lsof -tiTCP:"${candidate}" -sTCP:LISTEN 2>/dev/null); do
+    cwd=$(/usr/sbin/lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p')
+    [[ "${cwd}" == "${PROJECT_DIR}" ]] && /bin/kill -TERM "${pid}" 2>/dev/null || true
+  done
+  for _ in {1..20}; do
+    port_is_free "${candidate}" && break
+    /bin/sleep 0.1
+  done
+done
+
+for candidate in {8787..8797}; do
+  if [[ -z "${PORT}" ]] && port_is_free "${candidate}"; then
+    PORT="${candidate}"
+  fi
+done
+
+if [[ -z "${PORT}" ]]; then
+  notify_error "No free local port was found between 8787 and 8797."
+  exit 1
+fi
+
+URL="http://127.0.0.1:${PORT}/"
+
+/bin/mkdir -p "${PROJECT_DIR}/data"
+cd "${PROJECT_DIR}" || exit 1
+
+/usr/bin/nohup /usr/bin/env PYTHONPATH="${PROJECT_DIR}/src" "${PYTHON_BIN}" \
+  -m agents.web_server --port "${PORT}" --no-browser >>"${LOG_FILE}" 2>&1 &
+
+for _ in {1..60}; do
+  if /usr/bin/curl --silent --fail --max-time 1 "${URL}api/status" >/dev/null 2>&1; then
+    /usr/bin/open "${URL}"
+    exit 0
+  fi
+  /bin/sleep 0.5
+done
+
+notify_error "The local service did not become ready on port ${PORT}. Check data/desktop-launcher.log."
+exit 1

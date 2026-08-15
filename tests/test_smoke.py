@@ -12,6 +12,7 @@ from agents.chunking import Chunk, clean_markdown, load_chunks
 from agents.config import load_config
 from agents.embeddings import TfidfHashEmbeddingBackend
 from agents.retriever import Retriever
+from agents import reranker as reranker_module
 from agents.vector_store import VectorStore
 
 SAMPLE = """---
@@ -54,6 +55,29 @@ def test_tfidf_backend():
     q = b.embed_query("什么是 RAG")
     assert q.shape == (256,)
     print("✓ tfidf backend")
+
+
+def test_reranker_never_downloads_on_startup():
+    calls = []
+    original = reranker_module.CrossEncoder
+
+    class MissingCrossEncoder:
+        def __init__(self, _model_name, **kwargs):
+            calls.append(kwargs)
+            raise OSError("not cached")
+
+    reranker_module.CrossEncoder = MissingCrossEncoder
+    try:
+        try:
+            reranker_module.CrossEncoderReranker._load("missing/model")
+        except OSError:
+            pass
+    finally:
+        reranker_module.CrossEncoder = original
+
+    assert len(calls) == 1
+    assert calls[0]["local_files_only"] is True
+    print("✓ reranker startup stays offline")
 
 
 def test_vector_store_search():
@@ -177,6 +201,7 @@ def test_memory():
 if __name__ == "__main__":
     test_clean_markdown()
     test_tfidf_backend()
+    test_reranker_never_downloads_on_startup()
     test_vector_store_search()
     test_bm25()
     test_hybrid_retriever()

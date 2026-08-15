@@ -43,7 +43,12 @@ def run():
         assert reopened.messages(session_a) == []
         assert reopened.session_belongs_to(session_a, "default")
 
-    print("✓ web store persistence, isolation, feedback and stats")
+        reopened.delete_session(session_b)
+        assert not reopened.session_belongs_to(session_b, "default")
+        assert reopened.messages(session_b) == []
+        assert reopened.stats("default") == {"today_queries": 0, "kb_hits": 0, "hit_rate": 0.0}
+
+    print("✓ web store persistence, isolation, deletion, feedback and stats")
 
 
 if __name__ == "__main__":
