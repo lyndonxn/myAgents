@@ -1,41 +1,46 @@
-# HANDOFF — Agent 五大核心模块补全 ✅ 已完成
+# HANDOFF — myAgents Agent 化改造（全部完成 ✅）
 
-根任务：按用户核对清单补全 myAgents 五大核心模块。规格：`spec/agent-core-modules.md`。契约：`AGENTS.md`。
-分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**未 push**（未获授权，如需推送请明确指示）。
+分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**未 push**（未获授权）。
+规格：`spec/agent-core-modules.md`（S 阶段 + T 阶段）。契约：`AGENTS.md`。
 
-## 完成总览（5/5 切片，全部通过独立验收）
+## 第一期 S1–S5（五大核心模块补全，已验收）
 
-| 切片 | 内容（对应清单项） | 验收 | 提交 |
+| 切片 | 内容 | 提交 |
+| --- | --- | --- |
+| S1 | 工具层强化：schema 校验/重试/KB→Web 降级/JSON 修复轮 | 56ad6bf |
+| S2 | ReAct 迭代：反思重规划/@step 占位符传递/预算护栏 | c5c6519 |
+| S3 | 引用校验 + 评测指标（幻觉率/完成率/--judge） | 40438d5 |
+| S4 | 记忆体系：长期记忆向量库/摘要压缩/遗忘/实体记忆 | cc24700 |
+| S5 | 任务状态机：逐步落盘/暂停恢复取消/崩溃恢复 API | 320498e |
+
+## 第二期 T1–T5（遗留事项处理，已验收）
+
+| 切片 | 内容 | 验收 | 提交 |
 | --- | --- | --- | --- |
-| S1 | 工具层强化：JSON Schema 参数强校验、步骤级重试、KB→Web 降级路由、chat_json 解析失败修复轮（清单 3/9/10） | ACC-S1-01..04 全 PASS | 56ad6bf |
-| S2 | ReAct 迭代：反思重规划（Self-Reflection）、`@step:N` 步骤数据传递（多工具链式）、预算护栏（清单 1/2） | ACC-S2-01..04 全 PASS | c5c6519 |
-| S3 | 引用校验：幻觉引用剔除与计数、评测新增 completion_rate/hallucination_rate/task_completed、可选 `--judge` LLM 评审（清单 7/8） | ACC-S3-01..03 全 PASS | 40438d5 |
-| S4 | 记忆体系：长期记忆向量库（data/memory/，TF-IDF/本地句向量）、滚动摘要压缩、容量遗忘（hits+新旧）、实体记忆、检索增强规划、摘要随会话持久化（清单 4/6） | ACC-S4-01..04 全 PASS | cc24700 |
-| S5 | 任务状态机：TaskStore 逐步落盘（data/tasks/）、暂停/恢复/取消、崩溃恢复（recover_running）、`/api/tasks` 系端点（清单 5，仅后端） | ACC-S5-01..04 全 PASS（复验通过） | 320498e |
+| T1 | 任务答案写回会话（on_complete 回调）+ payload 透出 citations_valid/invalid | ACC-T1-01..03 | 66d6b0f |
+| T2 | 任务面板 Web UI（右侧 trace 面板 04 区块：列表/状态徽章/暂停继续取消/步骤详情/发现轮询）+ 引用校验行 + 「后台任务」徽标；浏览器实测通过 | ACC-T2-01..04 | 97d43e2 |
+| T3 | CLI 任务模式 `python -m scripts.task`（--question/--list/--watch/--resume/--cancel/--task-store） | ACC-T3-01..03 | b0865e5 |
+| T4 | 示例评测库：samples/kb 5 篇原创文档 + questions_sample.json 10 题 + --kb/--questions 内存索引（零落盘） | ACC-T4-01..03 | 3df2e36 |
+| T5 | 完整 LLM 评测实跑 + 用量计量修正（按题增量） | 实测 | 39565f9 |
 
-## 新增能力入口
-- 配置：`config.yaml` 新增 `llm.json_repair_rounds`、`tools.max_retries/kb_fallback_web`、`planner.reflect/max_reflections`、`memory.*` 四键（默认开启，可关）。
-- API：`GET/POST /api/tasks`、`GET /api/tasks/{id}`、`POST /api/tasks/{id}/pause|resume|cancel`（现有 /api/ask 系行为不变）。
-- Agent 内部：`plan_only()/finish_task()` 任务路径拆解件；`Answer.citations_valid/invalid`；`Plan.rounds/reflections`。
-- 评测：`python -m benchmark.run_benchmark --complete-threshold 0.5 [--judge]`（--judge 付费，默认关）。
+### T 阶段实测发现与修复（浏览器/实跑证据）
+1. **任务面板发现死锁**：页面加载时无任务则轮询永不启动，后创建的任务无法被发现 → 改为常驻发现轮询（活跃 2s / 空闲 8s，页面隐藏即停）。97d43e2
+2. **任务写回消息缺引用计数**：TaskRecord 未存 citations → TaskRecord 增字段、finish_task 返回 report、写回 metrics 带上，聊天流引用校验行打通。97d43e2
+3. **评测总成本重复累计**：Agent.ask 返回会话累计用量，汇总按行求和被放大 ~7 倍 → 按题差值记录。39565f9
+
+### 完整评测结果（benchmark/results.md，gitignored 仅本地）
+15 题：关键词命中 100%、来源命中 100%、任务完成率 100%、平均延迟 13.2s、总成本 ¥0.0554、退化率 0%；引用幻觉率 13.0%——全部来自 q10（主题概览题）：`list_knowledge_topics` 工具无来源输出时 LLM 仍编造 [n] 编号，被引用校验如实剔除并计入幻觉率（该指标的教科书案例；若要消除，可给主题工具补来源或让规划器对该类问题跳过引用指令）。
 
 ## 验证状态（最终全量回归，全绿）
-`py_compile` 全仓 ✓；tests/test_smoke、test_web_store、test_tool_hardening、test_react_loop、test_citations、test_long_memory、test_task_runner 七个套件全部通过。完整 LLM 评测（付费）未运行；`--retrieval-only` 实跑 15 题文件命中 100%/章节命中 93.3%。
+py_compile 全仓 ✓；八个测试套件（smoke/web_store/tool_hardening/react_loop/citations/long_memory/task_runner/task_cli + benchmark_sample）全部通过。
 
-## 过程记录
-- 每切片流程：实现分支会话 → 控制器审 diff+复跑验证 → 独立验收子代理逐条核对验收 ID → 提交。
-- S5 首轮验收 REJECTED（HTTP 任务控制路由解析段数错误恒 404），控制器修复后复验 ACCEPTED——该缺陷单元测试未覆盖（只测了 TaskRunner 层），由验收子代理的 HTTP 级实测发现。
-- 控制器补充修复两处：S2 payload 透出 rounds/reflections；S4 会话摘要随 SQLite 持久化（消除每 ask 一次的重复压缩调用）+ 旧库迁移（sessions.summary 列）。
-
-## 未完成 / 延期项
-- 任务暂停/恢复的 Web UI、引用校验前端展示（用户已确认延期；webui.html 无 /api/tasks 引用）。
-- 评测题库扩容：步骤见 benchmark/README.md「扩容题库的步骤」；私人知识库不得生成题目入库。
-- CLI（scripts/ask.py）未暴露任务路径；任务答案不写回会话消息（record 本身即持久化）。
+## 剩余延期项（均已明确，无阻塞）
+- 无。原延期项全部落地。可选后续：主题工具来源化（消除 q10 类幻觉）、任务面板创建入口、示例库扩题。
 
 ## 风险与注意
 - 用户工作区未提交变更（`dist/` 删除、`docs/`、`.zcode/` 未跟踪）保持原样，未纳入任何提交。
-- `data/runtime.json` 含真实 API Key（已 gitignore；曾在分析上下文出现，建议轮换）。
-- S4 长期记忆位于 `data/memory/`、S5 任务位于 `data/tasks/`，均已随 data/ 被 gitignore 排除。
+- `data/runtime.json` 含真实 API Key（gitignored；建议轮换）。
+- results.json/results.md 含私人知识库路径，已由 gitignore 排除，不得提交。
 
 ## 下一步动作
-如需合入：将 feature/agent-core-modules 合并/提 PR 至 main（需用户授权 push）。如需继续：前端接入任务面板、CLI 任务模式、题库扩容（需可公开示例知识库）。
+如需合入：feature/agent-core-modules → main（合并/PR 需用户授权 push）。
