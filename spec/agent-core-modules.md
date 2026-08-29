@@ -104,3 +104,63 @@ memory:   long_term_enabled: true; entities_enabled: true; max_episodes: 200; em
 
 ## 全局约束
 见根 `AGENTS.md`（离线测试、禁碰路径、向后兼容、零新增依赖）。测试全部离线（fake LLM / monkeypatch / 临时目录 store）。
+
+---
+
+# T 阶段 · 遗留事项处理（第二期）
+
+背景：S1-S5 已全部交付。本阶段处理 HANDOFF 延期项。用户已确认开始；评测完整运行（付费）含在 T5。
+
+## T1 任务答案写回会话 + payload 透出引用校验
+
+Owned: `src/agents/task_runner.py`、`src/agents/web_server.py`、`tests/test_task_runner.py`
+
+- TaskRunner 构造新增可选 `on_complete: Callable[[TaskRecord], None]`：任务到达终态（completed）后调用（异常被吞并 LOG）。
+- web_server：构造 runner 时传入回调——completed 时把 `record.question` 作为 user 消息、`record.final_answer` 作为 assistant 消息写回 WebStore（metrics 附 `task_id`、latency、cost；sources 用 record.sources；plan 复用 record.plan），并 record_query（kb_hit 口径与 _persist_answer 一致）。paused/failed/canceled 不写。
+- `_answer_payload` 的 metrics 增加 `citations_valid`、`citations_invalid`（来自 answer；不影响既有键）。
+
+验收：
+- **ACC-T1-01** completed 任务 → WebStore 出现 user+assistant 两条消息且 assistant.metrics.task_id==task_id、sources 一致；查询事件 +1。
+- **ACC-T1-02** failed/canceled 任务 → 不写消息。
+- **ACC-T1-03** /api/ask 响应 metrics 含 citations_valid/invalid 且旧字段不变。
+
+## T2 任务面板 Web UI + 引用校验展示
+
+Owned: `scripts/webui.html`
+
+- 右侧 trace 面板新增「后台任务」区块：GET /api/tasks 列表（状态徽章 queued/running/paused/completed/failed/canceled、问题摘要、更新时间）；每个未终态任务有 暂停/继续/取消 按钮（POST 对应端点，操作后刷新）；点击任务行拉取 GET /api/tasks/{id} 展示步骤进度（每步 action/ok/error，复用现有 block 样式）；存在非终态任务时每 2s 轮询刷新，全部终态停止轮询。
+- 回答卡片：metrics 含 citations_invalid>0 时显示「引用校验：剔除 N 个无效引用」警示行；=0 且 valid>0 显示「引用校验 通过」；不改变既有卡片结构。
+- 严格复用现有设计 token（--blue/--red/--bg 等 CSS 变量、.block、mono 微标签、.chip 按钮风格），明暗双主题下均可读（检查 dark 主题变量覆盖）。
+- 任务写回的会话消息在聊天流中正常渲染（metrics.task_id 存在时 answer 卡片显示「后台任务」徽标即可，不做复杂区分）。
+
+验收：
+- **ACC-T2-01** 页面加载与轮询不报错（语法/引用检查）；任务区块在无任务时显示空态文案。
+- **ACC-T2-02** pause/resume/cancel 按钮调用正确端点且操作后刷新列表。
+- **ACC-T2-03** 引用校验警示行按 metrics 条件渲染；citations_invalid=0 时不显示剔除警示。
+- **ACC-T2-04** 新增样式仅用既有 CSS 变量（grep 无硬编码主题色），dark 主题下对比度可读（人工/代码审查判定）。
+
+## T3 CLI 任务模式
+
+Owned: `scripts/task.py`（新建）
+
+- `python -m scripts.task --question "..."`：创建任务（POST 不适用——CLI 直连本地模块：构造/复用 web_server 的 agent 或独立 Agent；简单方案：直接用 TaskRunner+TaskStore（data_dir/tasks）+ Agent(config, llm)），轮询 store.get(id) 每 0.5s 打印状态与新增步骤，终态打印 final_answer/sources/usage；`--list` 列出历史任务；`--resume ID`/`--cancel ID`/`--watch ID` 观察既有任务。
+- 复用 load_config/LLMClient；无 Key 时报错退出码 1。
+
+验收：
+- **ACC-T3-01** `--list` 能列出 TaskStore 中历史任务（离线，打桩 store）。
+- **ACC-T3-02** `--question` 创建任务并在轮询中到达 completed，输出答案（离线打桩 Agent；不触发真实网络）。
+- **ACC-T3-03** `--watch/--resume/--cancel` 对不存在 id 给出友好错误。
+
+## T4 评测题库扩容（可公开示例库）
+
+Owned: `samples/kb/`（新建 5 篇原创 Markdown）、`benchmark/questions_sample.json`（新建 10 题）、`benchmark/run_benchmark.py`（--kb/--questions 参数）、`tests/test_benchmark_sample.py`
+
+- samples/kb/：5 篇自写技术短文（RAG 基础/父子分块/混合检索/Agent 规划/MCP 协议——全部原创撰写，总字数适中，结构含清晰标题层级供 section 命中）。
+- questions_sample.json：10 题，字段与主题库一致（expected_keywords/files/sections），全部绑定样例文档文件名。
+- run_benchmark：`--kb PATH` 覆盖 kb_path 且用 `Agent.build_index(persist=False)` 内存索引（绝不写 data/index）；`--questions PATH` 覆盖题库路径；两者仅影响本次运行。
+- README 增补示例库用法一节。
+
+验收：
+- **ACC-T4-01** `--retrieval-only --kb samples/kb --questions benchmark/questions_sample.json` 全绿跑通且文件命中 ≥80%（离线，不写 data/）。
+- **ACC-T4-02** 带 --kb 运行后 data/index.* 与 data/chunks.json 的 mtime/内容不变（用户索引零污染）。
+- **ACC-T4-03** 样例文档全部原创（无版权文本），10 题字段完整且 expected_files 与样例文件名匹配（脚本校验）。
