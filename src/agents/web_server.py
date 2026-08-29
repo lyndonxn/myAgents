@@ -16,6 +16,7 @@ import json
 import threading
 import time
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -60,6 +61,19 @@ def mask_key(key: str) -> str:
     if len(key) <= 8:
         return "****"
     return key[:3] + "****" + key[-4:]
+
+
+def _task_latency_s(record) -> float | None:
+    """后台任务耗时（秒）：updated_at − created_at（秒级精度，含排队/暂停时长）。
+
+    任务路径没有单独的延迟计时，用落盘时间戳估算；解析失败返回 None（metrics 省略该键）。
+    """
+    try:
+        created = datetime.fromisoformat(record.created_at)
+        updated = datetime.fromisoformat(record.updated_at)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return max(0.0, round((updated - created).total_seconds(), 1))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -126,6 +140,9 @@ class Handler(BaseHTTPRequestHandler):
                 "prompt_tokens": answer.prompt_tokens,
                 "completion_tokens": answer.completion_tokens,
                 "cost_yuan": round(answer.estimated_cost, 4),
+                # S3 引用校验计数（T1 透出）：旧 answer 对象缺失时按 0 处理
+                "citations_valid": getattr(answer, "citations_valid", 0),
+                "citations_invalid": getattr(answer, "citations_invalid", 0),
             },
         }
 
@@ -149,6 +166,40 @@ class Handler(BaseHTTPRequestHandler):
         self.store.record_query(workspace_id, session_id, kb_hit)
         payload["message_id"] = message_id
         return payload
+
+    @classmethod
+    def persist_task_result(cls, record) -> None:
+        """后台任务结果写回会话消息（T1）：TaskRunner 的 on_complete 回调。
+
+        仅 completed 任务写回（paused/failed/canceled 不写）：question 作为 user 消息、
+        final_answer 作为 assistant 消息落 WebStore——sources/plan 复用 record，
+        metrics 附 task_id、耗时与用量（口径对齐 _persist_answer，record 没有的键省略），
+        并按相同 kb_hit 口径记录查询事件。回调在 TaskRunner 工作线程执行且不持锁，
+        与 /api/ask 的互斥由本方法自行持有 Handler.lock 保证。
+        """
+        if getattr(record, "status", "") != "completed":
+            return
+        store = cls.store
+        if store is None:
+            LOG.warning("任务结果写回失败: WebStore 未就绪 | task=%s", record.task_id)
+            return
+        usage = record.usage if isinstance(record.usage, dict) else {}
+        metrics: dict = {}
+        latency = _task_latency_s(record)
+        if latency is not None:
+            metrics["latency_s"] = latency
+        metrics["task_id"] = record.task_id
+        metrics["prompt_tokens"] = int(usage.get("prompt_tokens", 0))
+        metrics["completion_tokens"] = int(usage.get("completion_tokens", 0))
+        metrics["cost_yuan"] = round(float(usage.get("cost_yuan", 0.0)), 4)
+        with cls.lock:
+            store.add_message(record.session_id, "user", record.question)
+            store.add_message(
+                record.session_id, "assistant", record.final_answer, record.sources, record.plan, metrics
+            )
+            kb_hit = bool(record.sources) and any(not str(source).startswith("http") for source in record.sources)
+            store.record_query(record.workspace_id, record.session_id, kb_hit)
+        LOG.info("任务结果已写回会话: %s | session=%s", record.task_id, record.session_id)
 
     def _session_for_workspace(self, session_id: str, workspace_id: str) -> str:
         if not session_id:
@@ -731,6 +782,8 @@ def main() -> None:
         Handler.lock,
         agent_provider=lambda: Handler.agent,
         memory_provider=lambda session_id: Handler.store.memory(session_id),
+        # T1：completed 任务把答案写回会话消息（回调在工作线程执行，persist_task_result 自行持锁）
+        on_complete=lambda record: Handler.persist_task_result(record),
     )
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     Handler.server_ref = server

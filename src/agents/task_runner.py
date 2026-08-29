@@ -12,6 +12,10 @@
   锁（lock）内执行，会话记忆经 memory_provider 在锁内重建，防记忆串线。
 - 复用 Agent 现有件：规划用 agent.plan_only，合成用 agent.finish_task（agent.py
   纯新增拆解件，ask 行为不变）；执行器/规划器签名不变。
+- 完成回调（T1）：可选 on_complete(record) 在任务到达 completed 终态（落盘后）于
+  工作线程调用一次，供 web 层把答案写回会话消息；回调抛任何异常都被吞掉并告警，
+  不影响任务终态（paused/failed/canceled 不回调）。回调内部如需与 /api/ask 互斥，
+  由调用方的回调自行加锁，runner 不代持。
 
 工作线程为单个 daemon 线程，从 queue.Queue 取任务；submit 落盘（queued）并入队后
 立即返回 task_id。服务启动时由调用方先执行 TaskStore.recover_running()。
@@ -156,6 +160,8 @@ class TaskRunner:
     agent_provider: 返回执行用 Agent 的 callable（web 为 Handler.agent，测试注入桩）；
     memory_provider: session_id -> SessionMemory（web 为 WebStore.memory，含摘要恢复；
     为 None 或会话为空时用全新空会话记忆，保证任务路径不串用其他会话记忆）。
+    on_complete: 可选完成回调（T1），completed 终态落盘后在工作线程调用一次，
+    异常被吞掉并告警；paused/failed/canceled 不调用。
     """
 
     def __init__(
@@ -164,11 +170,13 @@ class TaskRunner:
         lock: threading.Lock,
         agent_provider: Callable[[], Agent | None],
         memory_provider: Callable[[str], SessionMemory | None] | None = None,
+        on_complete: Callable[[TaskRecord], None] | None = None,
     ):
         self.store = store
         self.lock = lock
         self.agent_provider = agent_provider
         self.memory_provider = memory_provider
+        self.on_complete = on_complete
         self._queue: queue.Queue = queue.Queue()
         self._ctrl_lock = threading.Lock()
         self._pause_events: dict[str, threading.Event] = {}
@@ -285,6 +293,19 @@ class TaskRunner:
             record.error = error
             self.store.update(record)
         self._cleanup_events(task_id)
+
+    def _notify_complete(self, record: TaskRecord) -> None:
+        """completed 终态（已落盘）后触发 on_complete 回调（T1）。
+
+        在工作线程调用且不持有任何锁；回调抛任何异常都吞掉并告警，不影响任务终态
+        与工作线程存活。paused/failed/canceled 等其他路径不会走到这里。
+        """
+        if self.on_complete is None:
+            return
+        try:
+            self.on_complete(record)
+        except Exception as exc:  # noqa: BLE001 - 回调失败不能影响任务终态
+            LOG.warning("任务结果写回失败: %s | task=%s", exc, record.task_id)
 
     def _run(self, task_id: str) -> None:
         """处理一个队列条目：按落盘状态决定执行/跳过，终态时清理控制事件。"""
@@ -427,6 +448,7 @@ class TaskRunner:
         sync_usage()
         self.store.update(record)
         self._cleanup_events(record.task_id)
+        self._notify_complete(record)  # T1：completed 落盘后回调（锁外，回调方自行加锁）
 
     @staticmethod
     def _append_step(record: TaskRecord, step_dict: dict) -> None:

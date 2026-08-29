@@ -1,4 +1,4 @@
-"""S5 任务状态持久化 + 暂停/恢复测试。
+"""S5 任务状态持久化 + 暂停/恢复测试（含 T1 完成回调写回）。
 
 全部离线：LLM 用记录调用次数、按脚本返回文本的假客户端（子类化 LLMClient 覆写
 _chat，不发真实请求）；Agent 不加载真实索引（注入假工具注册表）；工具用可门控
@@ -6,6 +6,8 @@ _chat，不发真实请求）；Agent 不加载真实索引（注入假工具注
 TaskStore 用 tempfile 临时目录。等待一律用「事件/轮询 + 超时」，不依赖时序猜测。
 覆盖 spec ACC-S5-01..04，以及 failed 路径（步骤级失败节点 / 任务级失败）、
 list() 排序、canceled 终态保护、序列化往返与 TaskStore 原子落盘。
+T1 部分（ACC-T1-01..03）：completed 任务经 on_complete 写回 WebStore 会话消息、
+failed/canceled/paused 不回调、_answer_payload metrics 透出引用校验计数与回调异常吞噬。
 """
 from __future__ import annotations
 
@@ -15,12 +17,14 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import agents.task_store as task_store_mod
-from agents.agent import Agent
+from agents.agent import Agent, Answer
 from agents.config import Config
 from agents.executor import StepResult
 from agents.llm import ChatResult, LLMClient
@@ -29,6 +33,8 @@ from agents.planner import Plan, PlanStep
 from agents.task_runner import TaskRunner, plan_from_dict, plan_to_dict, step_from_dict, step_to_dict
 from agents.task_store import TaskRecord, TaskStore
 from agents.tools import Tool, ToolContext
+from agents.web_server import Handler
+from agents.web_store import WebStore
 
 
 class ScriptedLLM(LLMClient):
@@ -88,12 +94,21 @@ def _make_agent(td: str, llm: ScriptedLLM, tools: dict[str, Tool]) -> Agent:
     return agent
 
 
+def _web_probe_tool() -> Tool:
+    """仅返回 http 来源的探针工具（验证写回 record_query 的 kb_hit 非 http 口径）。"""
+    def web(ctx, query=""):
+        return {"text": f"{query} 的网页结果", "sources": ["https://example.com/r1"]}
+
+    return _make_tool("web", web, {"query": {"type": "string"}}, ["query"])
+
+
 def _make_runner(
     store: TaskStore,
     llm: ScriptedLLM,
     tools: dict[str, Tool],
     td: str,
     agent_holder: dict | None = None,
+    on_complete: Callable[[TaskRecord], None] | None = None,
 ) -> TaskRunner:
     """真实 TaskRunner：agent_provider 每次构建新离线 Agent（恢复路径等价于重启后重建）。"""
 
@@ -108,6 +123,7 @@ def _make_runner(
         threading.Lock(),
         build_agent,
         memory_provider=lambda session_id: SessionMemory(),  # 空会话记忆（离线）
+        on_complete=on_complete,  # T1：completed 终态回调（写回会话消息）
     )
 
 
@@ -133,6 +149,7 @@ PLAN_3STEPS = _plan_json([
 PLAN_Q1 = _plan_json([{"action": "probe", "input": {"query": "q1"}, "purpose": "p"}], "单步 q1")
 PLAN_Q2 = _plan_json([{"action": "probe", "input": {"query": "q2"}, "purpose": "p"}], "单步 q2")
 PLAN_Q3 = _plan_json([{"action": "probe", "input": {"query": "q3"}, "purpose": "p"}], "单步 q3")
+PLAN_WEB = _plan_json([{"action": "web", "input": {"query": "w1"}, "purpose": "p"}], "单步 web")
 
 
 # ---------------- ACC-S5-01 逐步持久化 ----------------
@@ -450,6 +467,171 @@ def test_task_store_basics():
     print("✓ TaskStore 倒序/roundtrip/原子落盘/非法 id 防护/终态不恢复")
 
 
+# ---------------- T1 · ACC-T1-01 completed 写回会话消息 ----------------
+
+def test_acc_t1_01_completed_writeback():
+    """ACC-T1-01：completed 任务 → WebStore 写回 user+assistant 两条消息，
+    assistant.metrics.task_id==task_id、sources/plan 与 record 一致；查询事件 +1（kb_hit 口径）。"""
+    with tempfile.TemporaryDirectory() as td:
+        store = TaskStore(Path(td) / "tasks")
+        web_store = WebStore(Path(td) / "webui.sqlite3")
+        web_store.ensure_default(str(Path(td)))
+        session_id = web_store.create_session("default")
+
+        old_store = Handler.store
+        Handler.store = web_store  # persist_task_result 以 Handler.store/lock 访问（classmethod）
+        try:
+            # kb 来源任务（probe → kb://q1.md，非 http → kb_hit=True）
+            llm = ScriptedLLM([PLAN_Q1, "任务最终答案[1]"], Config({}))
+            runner = _make_runner(
+                store, llm, {"probe": _probe_tool()}, td,
+                on_complete=lambda record: Handler.persist_task_result(record),
+            )
+            tid = runner.submit(session_id, "default", "写回任务")
+            assert _wait_until(lambda: (store.get(tid) or TaskRecord()).status == "completed"), "任务应完成"
+            # 写回在工作线程异步发生：轮询等待两条消息出现
+            assert _wait_until(lambda: len(web_store.messages(session_id)) >= 2), "应写回 user+assistant 两条消息"
+
+            rec = store.get(tid)
+            msgs = web_store.messages(session_id)
+            assert [m["role"] for m in msgs] == ["user", "assistant"]
+            assert msgs[0]["content"] == "写回任务", "user 消息应为 record.question"
+            assert msgs[1]["content"] == rec.final_answer == "任务最终答案[1]"
+            assert msgs[1]["sources"] == rec.sources == ["kb://q1.md"], "sources 应与 record 一致"
+            assert msgs[1]["metrics"]["task_id"] == tid
+            assert msgs[1]["metrics"]["prompt_tokens"] == rec.usage["prompt_tokens"]
+            assert msgs[1]["metrics"]["completion_tokens"] == rec.usage["completion_tokens"]
+            assert msgs[1]["metrics"]["cost_yuan"] == round(rec.usage["cost_yuan"], 4)
+            assert isinstance(msgs[1]["metrics"].get("latency_s"), (int, float)), "应附任务耗时"
+            assert msgs[1]["plan"] == rec.plan, "assistant 消息 plan 应复用 record.plan"
+            stats = web_store.stats("default")
+            assert stats["today_queries"] == 1 and stats["kb_hits"] == 1, f"kb 来源应记 kb_hit: {stats}"
+
+            # 仅 http 来源的任务：查询事件再 +1 但 kb_hits 不变（口径与 _persist_answer 一致）
+            llm2 = ScriptedLLM([PLAN_WEB, "网页答案"], Config({}))
+            runner2 = _make_runner(
+                store, llm2, {"web": _web_probe_tool()}, td,
+                on_complete=lambda record: Handler.persist_task_result(record),
+            )
+            tid2 = runner2.submit(session_id, "default", "网页任务")
+            assert _wait_until(lambda: (store.get(tid2) or TaskRecord()).status == "completed")
+            assert _wait_until(lambda: len(web_store.messages(session_id)) >= 4)
+            stats = web_store.stats("default")
+            assert stats["today_queries"] == 2 and stats["kb_hits"] == 1, f"http 来源不算 kb_hit: {stats}"
+        finally:
+            Handler.store = old_store
+
+    print("✓ ACC-T1-01 completed 任务写回 user+assistant 消息（task_id/sources/plan/用量），查询事件 +1 且 kb_hit 口径正确")
+
+
+# ---------------- T1 · ACC-T1-02 非完成终态不回调 ----------------
+
+def test_acc_t1_02_failed_canceled_no_callback():
+    """ACC-T1-02：failed/canceled/paused 任务不触发 on_complete；同 runner 的 completed 恰好回调一次。"""
+    with tempfile.TemporaryDirectory() as td:
+        calls: list[str] = []
+
+        def on_complete(record: TaskRecord) -> None:
+            calls.append(record.task_id)
+
+        # 1) failed：规划失败（坏 JSON 两次 + fallback_direct=False）
+        store = TaskStore(Path(td) / "tasks")
+        cfg = Config({"data_dir": td, "memory": {"embedding_backend": "tfidf"},
+                      "tools": {"max_retries": 0}, "planner": {"fallback_direct": False}})
+        llm = ScriptedLLM(["这不是JSON", "修复轮也不是JSON"], cfg)
+        runner = _make_runner(store, llm, {"probe": _probe_tool()}, td, on_complete=on_complete)
+        tid_f = runner.submit("s1", "w1", "失败任务")
+        assert _wait_until(lambda: (store.get(tid_f) or TaskRecord()).status == "failed"), "规划失败应 failed"
+        assert calls == [], "failed 任务不应触发回调"
+
+        # 2) canceled：运行中取消（工作线程阻塞在 q1 的工具调用里时发起 cancel）
+        gate_q1, gate_q2 = threading.Event(), threading.Event()
+        store2 = TaskStore(Path(td) / "tasks2")
+        llm2 = ScriptedLLM([PLAN_Q1, PLAN_Q2, PLAN_Q1, "控制组答案"], Config({}))
+        runner2 = _make_runner(
+            store2, llm2, {"probe": _probe_tool({"q1": gate_q1, "q2": gate_q2})}, td, on_complete=on_complete
+        )
+        tid_c = runner2.submit("s1", "w1", "运行中取消")
+        assert _wait_until(lambda: len((store2.get(tid_c).plan or {}).get("steps") or []) == 1)
+        assert runner2.cancel(tid_c) == "canceled"
+        gate_q1.set()  # 放行在途步骤，让工作线程走到取消收尾
+        assert _wait_until(
+            lambda: (r := store2.get(tid_c)) is not None and r.status == "canceled" and len(r.steps) == 1
+        ), "取消收尾后应为 canceled"
+        assert calls == [], "canceled 任务不应触发回调"
+
+        # 3) paused：工作线程阻塞在 q2 的工具调用里时暂停，步骤边界生效
+        tid_p = runner2.submit("s1", "w1", "暂停任务")
+        assert _wait_until(lambda: len((store2.get(tid_p).plan or {}).get("steps") or []) == 1)
+        assert runner2.pause(tid_p) in ("running", "paused")
+        gate_q2.set()  # 放行在途步骤，让工作线程走到步骤边界检查点
+        assert _wait_until(lambda: (r := store2.get(tid_p)) is not None and r.status == "paused"), "应进入 paused"
+        assert calls == [], "paused 任务不应触发回调"
+        assert runner2.cancel(tid_p) == "canceled"  # 清理：paused → canceled
+
+        # 4) 控制组：同一 runner 的正常任务完成 → 回调恰好一次（证明计数机制有效）
+        tid_ok = runner2.submit("s1", "w1", "正常完成")
+        assert _wait_until(lambda: (store2.get(tid_ok) or TaskRecord()).status == "completed")
+        assert calls == [tid_ok], f"仅 completed 任务应回调一次: {calls}"
+
+    print("✓ ACC-T1-02 failed/canceled/paused 任务不触发 on_complete，completed 恰好回调一次")
+
+
+# ---------------- T1 · ACC-T1-03 payload citations + 回调异常吞噬 ----------------
+
+def test_acc_t1_03_payload_citations_and_callback_error():
+    """ACC-T1-03：_answer_payload metrics 含 citations_valid/invalid 且旧键不变；
+    on_complete 回调抛异常被吞掉并告警，任务仍 completed、工作线程继续服务。"""
+    handler = object.__new__(Handler)  # 跳过 socket 初始化的裸实例，仅调用 _answer_payload
+    answer = Answer(
+        final_answer="答案正文[1]", error="", sources=["kb://a.md"],
+        plan=Plan(reasoning="r", plan_summary="摘要",
+                  steps=[PlanStep(action="probe", input={"query": "q"}, purpose="p", step_id=1)]),
+        steps=[StepResult(step_id=1, action="probe", input={"query": "q"}, output={"text": "t"}, ok=True)],
+        citations_valid=1, citations_invalid=2,
+        total_latency_s=1.23, llm_calls=2, prompt_tokens=11, completion_tokens=7, estimated_cost=0.00214,
+    )
+    payload = handler._answer_payload(answer)
+    metrics = payload["metrics"]
+    assert set(payload) == {"answer", "error", "sources", "plan", "metrics"}, "payload 顶层键不变"
+    assert metrics["citations_valid"] == 1 and metrics["citations_invalid"] == 2
+    assert set(metrics) == {"latency_s", "llm_calls", "prompt_tokens", "completion_tokens",
+                            "cost_yuan", "citations_valid", "citations_invalid"}, "旧 metrics 键一个不少"
+    assert metrics["latency_s"] == 1.2 and metrics["llm_calls"] == 2
+    assert metrics["prompt_tokens"] == 11 and metrics["completion_tokens"] == 7
+    assert metrics["cost_yuan"] == 0.0021
+    assert payload["answer"] == "答案正文[1]" and payload["sources"] == ["kb://a.md"]
+    assert payload["plan"]["summary"] == "摘要" and payload["plan"]["steps"][0]["action"] == "probe"
+
+    # 缺 citations 字段的旧 answer 形状对象 → 按 0 透出，不抛异常
+    legacy = SimpleNamespace(
+        final_answer="旧答案", error="", sources=[], plan=Plan(), steps=[],
+        total_latency_s=0.5, llm_calls=1, prompt_tokens=1, completion_tokens=1, estimated_cost=0.0,
+    )
+    legacy_metrics = handler._answer_payload(legacy)["metrics"]
+    assert legacy_metrics["citations_valid"] == 0 and legacy_metrics["citations_invalid"] == 0
+
+    # 回调抛异常：runner 吞掉不崩，任务仍 completed，后续任务照常完成
+    with tempfile.TemporaryDirectory() as td:
+        store = TaskStore(Path(td) / "tasks")
+
+        def boom(record: TaskRecord) -> None:
+            raise RuntimeError("写回炸了")
+
+        llm = ScriptedLLM([PLAN_Q1, "第一次答案", PLAN_Q1, "第二次答案"], Config({}))
+        runner = _make_runner(store, llm, {"probe": _probe_tool()}, td, on_complete=boom)
+        tid1 = runner.submit("s1", "w1", "回调异常任务一")
+        assert _wait_until(lambda: (store.get(tid1) or TaskRecord()).status == "completed"), "任务应不受回调异常影响"
+        rec = store.get(tid1)
+        assert rec.final_answer == "第一次答案" and rec.error == "", "回调异常不应改写任务终态"
+
+        tid2 = runner.submit("s1", "w1", "回调异常任务二")
+        assert _wait_until(lambda: (store.get(tid2) or TaskRecord()).status == "completed")
+        assert store.get(tid2).final_answer == "第二次答案", "工作线程应在回调异常后继续服务"
+
+    print("✓ ACC-T1-03 metrics 透出 citations_valid/invalid 且旧键不变；回调异常被吞、任务仍 completed")
+
+
 if __name__ == "__main__":
     test_acc_s5_01_stepwise_persistence()
     test_acc_s5_02_pause_resume()
@@ -459,4 +641,7 @@ if __name__ == "__main__":
     test_task_level_failed_on_plan_error()
     test_plan_step_serialization()
     test_task_store_basics()
-    print("\nS5 任务状态持久化与暂停/恢复测试全部通过 ✅")
+    test_acc_t1_01_completed_writeback()
+    test_acc_t1_02_failed_canceled_no_callback()
+    test_acc_t1_03_payload_citations_and_callback_error()
+    print("\nS5 任务状态持久化与暂停/恢复 + T1 完成回调写回测试全部通过 ✅")
