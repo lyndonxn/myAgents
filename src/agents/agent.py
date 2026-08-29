@@ -13,6 +13,8 @@ ask(question) 返回结构化 Answer：计划、步骤结果、最终答案、�
 记忆体系（S4）：规划前召回跨会话相关历史经验注入规划提示词；成功问答后抽取实体、
 写入长期记忆，并把会话记忆滑出窗口的轮次压缩为摘要。均受 memory.* 开关控制；
 长期记忆与实体记忆仅在提供 session_id 时读写（无会话调用保持原有行为，无额外副作用）。
+任务路径拆解件（S5）：plan_only/finish_task 把 ask 的「规划」「合成+引用校验」拆给
+后台任务运行器复用（暂停/恢复/逐步持久化），ask 本身行为不变。
 """
 from __future__ import annotations
 
@@ -425,6 +427,63 @@ class Agent:
             )
         except Exception as exc:  # noqa: BLE001
             LOG.warning("长期记忆写入失败，跳过: %s", exc)
+
+    # ================= 任务路径拆解件（S5：仅供 TaskRunner 使用，ask 行为不变） =================
+
+    def plan_only(self, question: str, session_id: str = "") -> tuple[Plan, str, str]:
+        """任务路径的规划阶段（S5）：上下文改写 + 长期记忆召回 + 生成计划，不执行步骤。
+
+        与 ask 的第 0/0.5/1 阶段逻辑一致（含 fallback 路径的独立查询兜底），
+        只读不写：不写会话记忆、不写长期记忆、无其他副作用。
+        返回 (plan, q_work, history_text)——history_text 供合成阶段复用。
+        """
+        if not self._index_loaded:
+            self.load_index()
+        self.ensure_llm()
+
+        # 会话上下文：历史文本 + 追问改写（指代消解，保证检索查询独立）
+        history_text = self.memory.as_text()
+        q_work = question
+        if not self.memory.is_empty:
+            q_work = rewrite_query(self.llm, question, history_text)
+
+        # 长期记忆召回（S4）：仅提供 session_id 时启用，排除本会话最近 2 条
+        longterm_text = ""
+        if session_id:
+            try:
+                lm = self.long_memory
+                if lm is not None:
+                    longterm_text = lm.as_context(q_work, k=3, exclude_session_recent=(session_id, 2))
+            except Exception as exc:  # noqa: BLE001 - 记忆增强失败不影响规划
+                LOG.warning("长期记忆召回失败，跳过: %s", exc)
+
+        planner = Planner(self.config, self.llm)
+        plan = planner.plan(
+            question, describe_tools(self.tools), history_text=history_text, longterm_text=longterm_text
+        )
+        # 退化路径用改写后的独立查询兜底（与 ask 一致）
+        if plan.fallback and q_work != question and plan.steps:
+            plan.steps[0].input["query"] = q_work
+        return plan, q_work, history_text
+
+    def finish_task(
+        self, question: str, plan: Plan, steps: list[StepResult], history_text: str = ""
+    ) -> tuple[str, list[str]]:
+        """任务路径的合成阶段（S5）：合成最终答案并校验引用，不写任何记忆。
+
+        与 ask 的第 3/3.5 阶段逻辑一致：复用 _synthesize 与 _collect_sources，
+        并按实际来源数校验正文 [n] 引用（非法编号从答案中剔除）。
+        返回 (final_answer, sources)。
+        """
+        final_answer = self._synthesize(question, plan, steps, history_text)
+        sources = self._collect_sources(steps)
+        report = validate_citations(final_answer, len(sources))
+        if report.invalid_count:
+            LOG.warning(
+                "引用校验：剔除 %d 个非法引用编号 %s（实际来源数=%d）",
+                report.invalid_count, report.invalid_numbers, len(sources),
+            )
+        return report.cleaned_text, sources
 
     @staticmethod
     def _trajectory(steps: list[StepResult]) -> list[dict]:

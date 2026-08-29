@@ -23,6 +23,8 @@ from agents.agent import Agent
 from agents.config import PROJECT_ROOT, load_config, save_runtime
 from agents.llm import LLMClient, LLMError
 from agents.logger import get_logger, setup_logging
+from agents.task_runner import TaskRunner
+from agents.task_store import TaskStore
 from agents.web_store import WebStore
 
 PAGE = PROJECT_ROOT / "scripts" / "webui.html"
@@ -63,6 +65,7 @@ def mask_key(key: str) -> str:
 class Handler(BaseHTTPRequestHandler):
     agent = None  # type: ignore[assignment]
     store = None  # type: ignore[assignment]
+    task_runner = None  # type: ignore[assignment]  # S5：后台任务运行器（main 装配）
     lock = threading.Lock()
     building = False
     build_error = ""
@@ -229,6 +232,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/stats":
             self._send_json(self.store.stats(self._active_workspace()["id"]))
+            return
+        # S5 任务列表：摘要视图（不含 plan/steps 明细），按 updated_at 倒序
+        if self.path == "/api/tasks":
+            records = self.task_runner.store.list() if self.task_runner else []
+            self._send_json({"tasks": [r.summary() for r in records]})
+            return
+        # S5 任务详情：完整 record JSON
+        if self.path.startswith("/api/tasks/"):
+            task_id = self.path[len("/api/tasks/"):].strip("/")
+            record = self.task_runner.store.get(task_id) if self.task_runner else None
+            if record is None:
+                self._send_json({"error": "任务不存在"}, 404)
+            else:
+                self._send_json(record.to_dict())
             return
         if self.path == "/api/config":
             self._send_json(self._config_view())
@@ -439,6 +456,54 @@ class Handler(BaseHTTPRequestHandler):
             response = self._persist_answer(session_id, workspace["id"], question or "图片问答", answer)
             self._send_json({"question": full_question, "image_description": description,
                              "session_id": session_id, **response})
+            return
+
+        # S5 创建任务：校验与 /api/ask 同口径，落盘 queued 并入队后立即返回
+        if self.path == "/api/tasks":
+            if payload is None:
+                self._send_json({"error": "请求格式错误"}, 400)
+                return
+            question = str(payload.get("question", "")).strip()
+            session_id = str(payload.get("session_id", "")).strip()
+            if not question:
+                self._send_json({"error": "问题不能为空"}, 400)
+                return
+            if not self.agent.config.llm_api_key:
+                self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
+                return
+            workspace = self._active_workspace()
+            try:
+                session_id = self._session_for_workspace(session_id, workspace["id"])
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 409)
+                return
+            task_id = self.task_runner.submit(session_id, workspace["id"], question)
+            LOG.info("任务已创建: %s | q=%s", task_id, question[:60])
+            self._send_json({"ok": True, "task_id": task_id, "status": "queued"})
+            return
+
+        # S5 任务控制：/api/tasks/{id}/pause|resume|cancel
+        # 路径段为 [api, tasks, {id}, action]，共 4 段
+        if self.path.startswith("/api/tasks/"):
+            parts = self.path.strip("/").split("/")
+            action = parts[3] if len(parts) == 4 else ""
+            if action not in ("pause", "resume", "cancel"):
+                self._send_json({"error": "未知任务操作"}, 404)
+                return
+            try:
+                if action == "pause":
+                    status = self.task_runner.pause(parts[2])
+                elif action == "resume":
+                    status = self.task_runner.resume(parts[2])
+                else:
+                    status = self.task_runner.cancel(parts[2])
+            except KeyError:
+                self._send_json({"error": "任务不存在"}, 404)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 409)
+                return
+            self._send_json({"ok": True, "status": status})
             return
 
         if self.path == "/api/reset":
@@ -655,6 +720,18 @@ def main() -> None:
     Handler.agent = build_agent()
     Handler.store = WebStore(config.data_dir / "webui.sqlite3")
     Handler.store.ensure_default(config.kb_path)
+    # S5：任务状态存储与后台运行器。启动时把遗留 queued/running 任务恢复为 paused，
+    # 崩溃/中断的任务可经 POST /api/tasks/{id}/resume 继续。
+    task_store = TaskStore(config.data_dir / "tasks")
+    recovered = task_store.recover_running()
+    if recovered:
+        LOG.info("启动恢复：%d 个未完成任务转为 paused: %s", len(recovered), ", ".join(recovered))
+    Handler.task_runner = TaskRunner(
+        task_store,
+        Handler.lock,
+        agent_provider=lambda: Handler.agent,
+        memory_provider=lambda session_id: Handler.store.memory(session_id),
+    )
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     Handler.server_ref = server
     Handler.last_heartbeat = time.monotonic()
