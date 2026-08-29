@@ -10,6 +10,11 @@
 
 可选 --judge（默认关，付费）：用 LLM 评审每题答案是否被检索证据
 支撑（0=无证据支撑 / 1=部分支撑 / 2=有证据支撑），输出 JSON。
+
+T4 起 --kb/--questions 支持换库换题评测：--kb 用样例/临时知识库在内存中
+重建索引（build_index(persist=False)，绝不写 data/index* 与 chunks.json），
+--questions 换用其他题库（如 questions_sample.json）。均只影响本次运行，
+不带参数时行为与从前完全一致。
 """
 from __future__ import annotations
 
@@ -122,12 +127,35 @@ def judge_answer(llm, question: str, answer_text: str, sources: list[str]) -> di
     return {"score": score, "reason": reason}
 
 
-def run_retrieval_only(questions: list[dict], config, top_k: int | None = None) -> None:
-    """只测检索命中率：对每题直接检索，检查期望来源文件/章节是否被召回（不调 LLM）。"""
-    from agents.agent import Agent
+def build_benchmark_agent(config, kb: str | None = None, llm: LLMClient | None = None) -> Agent:
+    """构造评测用 Agent（T4 --kb 支持）。
 
-    agent = Agent(config)
+    带 kb 时：本次运行临时覆盖 kb_path，并跳过 load_index（会从 data/ 读用户旧索引，
+    索引缺失时还会重建并落盘、污染用户数据），改为用 build_index(persist=False)
+    在内存中重建该库索引——绝不写 data/index* 与 data/chunks.json。
+    不带 kb 时：保持原行为——load_index() 从 data/ 加载既有索引。
+    仅影响本次运行，不修改任何配置文件。
+    """
+    if kb:
+        config._raw["kb_path"] = str(Path(kb).expanduser().resolve())
+        # augment=True 时 build_index 会写 data/contexts.json 缓存——评测路径显式禁用，保证零落盘
+        return Agent(config, llm=llm).build_index(persist=False, augment=False)
+    agent = Agent(config, llm=llm)
     agent.load_index()
+    return agent
+
+
+def run_retrieval_only(
+    questions: list[dict], config, top_k: int | None = None, agent: Agent | None = None
+) -> list[tuple]:
+    """只测检索命中率：对每题直接检索，检查期望来源文件/章节是否被召回（不调 LLM）。
+
+    agent 可注入（T4 --kb 场景：传入 build_benchmark_agent 用样例库内存构建的
+    Agent）；默认 None 时保持原行为：构造 Agent 并 load_index()。
+    """
+    if agent is None:
+        agent = Agent(config)
+        agent.load_index()
     k = top_k or config.top_k
 
     print(f"检索命中检查（top_k={k}，不调用 LLM）：")
@@ -162,23 +190,28 @@ def main() -> None:
     parser.add_argument("--multi-query", action="store_true", help="开启多查询扩展")
     parser.add_argument("--complete-threshold", type=float, default=0.5,
                         help="任务完成判定阈值：keyword_hit 与 source_hit 均需 >= 该值（默认 0.5）")
+    parser.add_argument("--kb", type=str, default=None,
+                        help="覆盖知识库路径（如 samples/kb）：内存构建索引，绝不写 data/，仅本次运行生效")
+    parser.add_argument("--questions", type=str, default=None,
+                        help="题库 JSON 路径（默认 benchmark/questions.json）")
     parser.add_argument("--judge", action="store_true",
                         help="用 LLM 评审每题答案的证据支撑度（付费，默认关闭）")
     args = parser.parse_args()
 
-    questions = json.loads((ROOT / "questions.json").read_text(encoding="utf-8"))
+    questions_path = Path(args.questions).expanduser() if args.questions else ROOT / "questions.json"
+    questions = json.loads(questions_path.read_text(encoding="utf-8"))
     config = load_config()
     if args.rerank is not None:
         config._raw.setdefault("retrieval", {})["rerank"] = args.rerank
     if args.multi_query:
         config._raw.setdefault("retrieval", {})["multi_query"] = True
     if args.retrieval_only:
-        run_retrieval_only(questions, config, top_k=args.top_k)
+        agent = build_benchmark_agent(config, kb=args.kb)
+        run_retrieval_only(questions, config, top_k=args.top_k, agent=agent)
         return
 
     llm = LLMClient(config)
-    agent = Agent(config, llm=llm)
-    agent.load_index()
+    agent = build_benchmark_agent(config, kb=args.kb, llm=llm)
     threshold = args.complete_threshold
 
     results = []

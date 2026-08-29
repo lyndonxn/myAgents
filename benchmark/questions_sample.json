@@ -1,0 +1,72 @@
+[
+  {
+    "id": "q01",
+    "question": "RAG 的端到端流程分为哪几个环节？",
+    "expected_keywords": ["分片", "索引", "召回", "重排", "生成"],
+    "expected_files": ["RAG 检索增强生成入门"],
+    "expected_sections": ["整体流程"]
+  },
+  {
+    "id": "q02",
+    "question": "为什么不把整本文档直接塞进上下文窗口，而要用 RAG？",
+    "expected_keywords": ["上下文窗口", "成本", "时效性", "检索"],
+    "expected_files": ["RAG 检索增强生成入门"],
+    "expected_sections": ["为什么需要 RAG"]
+  },
+  {
+    "id": "q03",
+    "question": "父子分块里，父块和叶子块各自承担什么职责？",
+    "expected_keywords": ["父块", "叶子块", "召回", "上下文"],
+    "expected_files": ["父子分块与索引策略"],
+    "expected_sections": ["父块与叶子块如何分工"]
+  },
+  {
+    "id": "q04",
+    "question": "答案末尾给出的参考出处，是怎么定位回原始文档的具体章节的？",
+    "expected_keywords": ["元数据", "标题路径", "引用", "来源文件"],
+    "expected_files": ["父子分块与索引策略"],
+    "expected_sections": ["元数据与来源追溯"]
+  },
+  {
+    "id": "q05",
+    "question": "RRF 融合为什么只看排名，不直接比较各路的原始分数？",
+    "expected_keywords": ["RRF", "倒数", "排名", "量纲"],
+    "expected_files": ["混合检索与重排序"],
+    "expected_sections": ["RRF 融合"]
+  },
+  {
+    "id": "q06",
+    "question": "Cross-Encoder 精排为什么比双编码器精度更高？",
+    "expected_keywords": ["交叉编码器", "交互", "注意力", "双编码器"],
+    "expected_files": ["混合检索与重排序"],
+    "expected_sections": ["Cross-Encoder 精排"]
+  },
+  {
+    "id": "q07",
+    "question": "ReAct 循环中的思考、行动、观察分别指什么？",
+    "expected_keywords": ["ReAct", "思考", "行动", "观察"],
+    "expected_files": ["Agent 规划与工具调用"],
+    "expected_sections": ["ReAct 循环"]
+  },
+  {
+    "id": "q08",
+    "question": "MCP 的 Host、Client、Server 三种参与者各自负责什么？",
+    "expected_keywords": ["Host", "Client", "Server", "工具"],
+    "expected_files": ["MCP 模型上下文协议概览"],
+    "expected_sections": ["三种参与者"]
+  },
+  {
+    "id": "q09",
+    "question": "模型训练完知识就固定了，新出的资料和内部文档它都不知道，有什么办法补救？",
+    "expected_keywords": ["检索", "知识库", "重新训练", "时效性"],
+    "expected_files": ["RAG 检索增强生成入门"],
+    "expected_sections": ["为什么需要 RAG"]
+  },
+  {
+    "id": "q10",
+    "question": "想让助手既读公司内部文档又能调用外部工具，每接一家都要单独写适配太麻烦，有统一的接入标准吗？",
+    "expected_keywords": ["MCP", "统一", "适配", "接入标准"],
+    "expected_files": ["MCP 模型上下文协议概览"],
+    "expected_sections": ["解决什么问题"]
+  }
+]

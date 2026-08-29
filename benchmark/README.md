@@ -36,6 +36,52 @@ python -m benchmark.run_benchmark --retrieval-only --multi-query
 
 输出 `results.json`（完整明细）与 `results.md`（汇总表）。
 
+## 示例知识库评测（samples/kb，T4）
+
+`samples/kb/` 内置 5 篇**完全原创**的技术短文，配套题库 `benchmark/questions_sample.json`
+（10 题，q01–q10，其中 q04/q09/q10 为改写/意译难例——问题文本不出现文档标题词）。
+`--kb` 让本次运行用样例库**在内存中重建索引**（`build_index(persist=False)`）：
+绝不读写 `data/index*` 与 `data/chunks.json`，用户索引零污染，仅本次运行生效。
+
+```bash
+# 免费跑样例库检索命中（不调 LLM、不写 data/）
+python -m benchmark.run_benchmark --retrieval-only --kb samples/kb --questions benchmark/questions_sample.json
+
+# 完整评测同样支持 --kb / --questions（调用 LLM，付费）
+python -m benchmark.run_benchmark --kb samples/kb --questions benchmark/questions_sample.json
+
+# 也可临时指向任意本地目录（如私有库做一次性体检，同样不写 data/）
+python -m benchmark.run_benchmark --retrieval-only --kb /path/to/你的库
+```
+
+样例库内容（每篇含 1 个一级标题 + 多个二级标题，二级标题供章节级命中判定）：
+
+| 文档 | 二级章节 |
+| --- | --- |
+| `RAG 检索增强生成入门.md` | 什么是 RAG / 为什么需要 RAG / RAG 的整体流程 |
+| `父子分块与索引策略.md` | 什么是父子分块 / 父块与叶子块如何分工 / 重叠与切分参数 / 元数据与来源追溯 |
+| `混合检索与重排序.md` | 单路检索的局限 / 向量检索与 BM25 / RRF 融合 / Cross-Encoder 精排 |
+| `Agent 规划与工具调用.md` | 任务拆解 / ReAct 循环 / 反思与重规划 / 工具注册与降级 |
+| `MCP 模型上下文协议概览.md` | 解决什么问题 / Host、Client 与 Server 三种参与者 / 能力协商 / 典型工作流程 |
+
+### 如何据此扩题
+
+1. **换/加文档**：替换或新增 `samples/kb/` 下的样例 Markdown（保持原创、标题层级清晰；
+   每个二级章节正文建议 ≥80 字，低于 `chunking.min_chars` 的章节会被丢弃、无法命中）。
+2. **同步补题**：在 `benchmark/questions_sample.json` 追加条目——`expected_files` 用
+   文件名（去 `.md`）子串；`expected_sections` 用二级标题子串；`expected_keywords`
+   3~5 个正确答案应含的关键词。
+3. **校准**：先跑 `--retrieval-only` 把文件/章节命中调到尽量 100%，再上完整评测校准
+   关键词；想要改写难例，就让问题文本避开文档标题词与章节标题（参考 q04/q09/q10）。
+4. **验收**：`tests/test_benchmark_sample.py` 会离线复跑样例库检索（文件命中 ≥80%）、
+   校验 `--kb` 不落盘、并核对题库与样例文档的结构一致性。
+
+### 隐私红线
+
+私人知识库（个人笔记、公司内部文档）**不得**放入 `samples/kb/` 或据此出题提交入库——
+文件名、章节标题、关键词都会间接泄漏私人内容的结构与措辞。样例库只收可公开的原创短文；
+私有库评测请用上面的 `--kb /path/to/私有库` 临时运行（索引只在内存，不落盘），题目文件不要提交。
+
 ## 题库结构（questions.json）
 
 每题包含：
