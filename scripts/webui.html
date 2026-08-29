@@ -594,6 +594,38 @@ body{
 .ctx-line{height:3px;background:var(--line);overflow:hidden;margin-bottom:9px}.ctx-line span{display:block;height:100%;width:0;background:var(--blue);transition:width .25s}.ctx-label{font-family:var(--mono);font-size:9px;color:var(--mute)}
 .iconbtn.recording{color:var(--red);border-color:var(--red);animation:micPulse 1s infinite}@keyframes micPulse{50%{box-shadow:0 0 0 4px rgba(220,38,38,.14)}}
 :root[data-theme="dark"]{--bg:#10141B;--panel:#171C25;--ink:#EEF2F8;--ink-2:#B7C0CE;--mute:#7F8998;--line:#293241;--line-2:#3A4658;--blue-soft:#172A4D;--blue-line:#31558F} :root[data-theme="dark"] .topbar{background:rgba(23,28,37,.9)}
+
+/* ============ T2 · 后台任务面板 + 引用校验展示（仅用既有 CSS 变量，明暗双主题自适应） ============ */
+.kb-head .task-flag{color:var(--blue);background:var(--blue-soft);border:1px solid var(--blue-line);}
+.cite-warn{margin-top:12px;font-size:12px;line-height:1.6;color:var(--red);border:1px solid var(--red);border-radius:6px;padding:8px 12px;}
+.cite-ok{margin-top:12px;font-family:var(--mono);font-size:9.5px;letter-spacing:0.08em;color:var(--mute);}
+.task-item{border-bottom:1px solid var(--line);}
+.task-item:last-child{border-bottom:none;}
+.task-row{display:flex;align-items:center;gap:8px;padding:9px 0;cursor:pointer;}
+.task-row:hover .task-q{color:var(--ink);}
+.task-badge{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:0.06em;padding:2px 7px;border-radius:4px;border:1px solid var(--line);color:var(--mute);background:transparent;flex-shrink:0;}
+.task-badge.st-running,.task-badge.st-paused{color:var(--blue);background:var(--blue-soft);border-color:var(--blue-line);}
+.task-badge.st-queued{color:var(--mute);}
+.task-badge.st-completed{color:var(--green);border-color:var(--green);}
+.task-badge.st-failed,.task-badge.st-canceled{color:var(--red);border-color:var(--red);}
+.task-q{flex:1;min-width:0;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.task-time{font-family:var(--mono);font-size:9px;color:var(--mute);white-space:nowrap;flex-shrink:0;}
+.task-caret{font-size:8px;color:var(--mute);transition:transform .2s;flex-shrink:0;}
+.task-row.open .task-caret{transform:rotate(90deg);}
+.task-acts{display:flex;gap:6px;flex-shrink:0;}
+.task-act{font-family:var(--mono);font-size:9px;letter-spacing:0.04em;color:var(--ink-2);border:1px solid var(--line-2);background:var(--panel);border-radius:4px;padding:2px 8px;cursor:pointer;transition:all .12s;}
+.task-act:hover{color:var(--blue);border-color:var(--blue-line);background:var(--blue-soft);}
+.task-act.danger:hover{color:var(--red);border-color:var(--red);background:transparent;}
+.task-detail{padding:0 0 10px;}
+.task-d-label{font-family:var(--mono);font-size:8.5px;letter-spacing:0.1em;color:var(--mute);text-transform:uppercase;margin:8px 0 4px;}
+.task-step{display:flex;align-items:baseline;gap:7px;font-family:var(--mono);font-size:9.5px;color:var(--ink-2);padding:3px 0;}
+.task-step .ts-ic{font-weight:700;flex-shrink:0;}
+.task-step .ts-ic.ok{color:var(--green);}
+.task-step .ts-ic.bad{color:var(--red);}
+.task-step .ts-err{color:var(--red);}
+.task-answer{font-size:11.5px;line-height:1.7;color:var(--ink-2);border-left:2px solid var(--blue-line);padding-left:9px;margin-top:4px;}
+.task-empty-line{font-family:var(--mono);font-size:9.5px;color:var(--mute);letter-spacing:0.04em;padding:3px 0;}
+
 .toast{position:fixed;left:50%;bottom:24px;z-index:70;transform:translate(-50%,12px);opacity:0;pointer-events:none;background:var(--ink);color:#fff;border-radius:6px;padding:9px 14px;font-size:12px;transition:.2s}.toast.show{opacity:1;transform:translate(-50%,0)}
 .img-preview{display:flex;align-items:center;gap:9px;margin:0 0 9px;padding:8px;border:1px solid var(--line);background:var(--panel);border-radius:6px}.img-preview[hidden]{display:none}.img-preview img{width:42px;height:42px;object-fit:cover;border-radius:4px}.img-preview span{flex:1;font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
@@ -702,6 +734,14 @@ body{
           <div class="v-row"><span class="k">本轮耗时</span><span id="vTime">—</span></div>
           <div class="v-row"><span class="k">生成速率</span><span id="vTok">—</span></div>
           <div class="v-row"><span class="k">联网回退</span><span class="green" id="vWeb">待命</span></div>
+        </div>
+      </div>
+
+      <div class="fig">
+        <div class="fig-label"><span class="fig-no">04</span><span>后台任务</span></div>
+        <div class="fig-sub">Background Tasks · 活跃 2s / 空闲 8s 自动刷新</div>
+        <div id="taskList">
+          <div class="src-empty">暂无后台任务。<br>后台执行的问题会在此显示状态与步骤进度。</div>
         </div>
       </div>
 
@@ -945,10 +985,12 @@ function liveAnswerHTML(m){
   if(m.thinking)return `<div class="thinking-state"><strong>思考中</strong><span class="thinking-dots" aria-label="正在生成回答"><i></i><i></i><i></i></span></div>`;
   const sources=sourceRows(m.sources), metrics=m.metrics||{}, plan=m.plan||{};
   const bar=`<div class="block retrieval-bar open"><div class="rb-top"><span class="rb-caret">▶</span><span class="rb-l">已检索到 <b>${sources.length}</b> 个相关来源</span><span class="rb-r"><span>${nowTime()}</span><button class="rb-act" onclick="copyAnswer('${m.messageId||''}')">复制</button><button class="rb-act" ${m.feedback==='up'?'style="font-weight:700;color:var(--blue)"':''} onclick="sendFeedback('${m.messageId||''}','up')">有用</button><button class="rb-act" ${m.feedback==='down'?'style="font-weight:700;color:var(--red)"':''} onclick="sendFeedback('${m.messageId||''}','down')">没用</button></span></div><div class="rb-list">${sources.map((s,i)=>`<div class="rb-chunk"><span class="ck">#${String(i+1).padStart(2,'0')}</span><span>${esc(s.name)}</span></div>`).join('')}</div></div>`;
-  const head=`<div class="block kb-head ${sources.length?'kb':'web'}"><span class="kb-badge">${sources.length?'知识库命中':'模型回答'}</span><span class="kb-doc">${sources.length?esc(sources[0].name):'未返回引用来源'}</span><span class="kb-sim">${metrics.latency_s??'—'}s · ¥${metrics.cost_yuan??0}</span></div>`;
+  const head=`<div class="block kb-head ${sources.length?'kb':'web'}"><span class="kb-badge">${sources.length?'知识库命中':'模型回答'}</span>${metrics.task_id?'<span class="kb-badge task-flag">后台任务</span>':''}<span class="kb-doc">${sources.length?esc(sources[0].name):'未返回引用来源'}</span><span class="kb-sim">${metrics.latency_s??'—'}s · ¥${metrics.cost_yuan??0}</span></div>`;
   const planHtml=(plan.steps||[]).length?`<div class="block note"><b>${esc(plan.summary||'执行轨迹')}</b><br>${plan.steps.map(s=>`${s.ok?'✓':'×'} ${esc(s.action)}`).join(' · ')}</div>`:'';
+  const citeInvalid=Number(metrics.citations_invalid||0),citeValid=Number(metrics.citations_valid||0);
+  const citeLine=citeInvalid>0?`<div class="block cite-warn">引用校验：剔除 ${citeInvalid} 个无效引用</div>`:(citeValid>0?`<div class="block cite-ok">引用校验 通过</div>`:'');
   const foot=sources.length?`<div class="block src-foot"><div class="src-chips">${sources.map((s,i)=>`<span class="src-chip"><span class="sc-n">0${i+1}</span><span>${esc(s.name)}</span></span>`).join('')}</div></div>`:'';
-  return bar+head+`<div class="block lead">${renderMd(m.answer||'')}</div>`+planHtml+foot;
+  return bar+head+citeLine+`<div class="block lead">${renderMd(m.answer||'')}</div>`+planHtml+foot;
 }
 function answerCardHTML(key){
   const a = ANSWERS[key];
@@ -1091,6 +1133,132 @@ function renderSources(sources){
     el.querySelectorAll('.rel-fill').forEach(f=>f.style.width = f.dataset.w+'%');
   }));
 }
+
+/* ================= BACKGROUND TASKS (T2) ================= */
+const TASK_STATUS_LABEL={queued:'排队中',running:'运行中',paused:'已暂停',completed:'已完成',failed:'失败',canceled:'已取消'};
+const TASK_TERMINAL=new Set(['completed','failed','canceled']);
+let currentTasks=[];
+let expandedTaskId=null;
+let taskDetailCache={};
+let taskListSig='';
+let taskPollTimer=null;
+
+function hasActiveTask(){
+  return currentTasks.some(t=>!TASK_TERMINAL.has(t.status));
+}
+function taskShortTime(iso){
+  if(!iso)return '—';
+  const d=new Date(iso);
+  if(Number.isNaN(d.getTime()))return String(iso).replace('T',' ').slice(5,16)||'—';
+  const now=new Date();
+  const hm=d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
+  if(d.toDateString()===now.toDateString())return hm;
+  return `${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${hm}`;
+}
+function taskActionsHTML(t){
+  const btn=(action,label,danger)=>`<button class="task-act ${danger?'danger':''}" onclick="event.stopPropagation();taskAction('${t.task_id}','${action}')">${label}</button>`;
+  if(t.status==='running')return btn('pause','暂停');
+  if(t.status==='paused')return btn('resume','继续')+btn('cancel','取消',true);
+  if(t.status==='queued')return btn('cancel','取消',true);
+  return '';
+}
+function taskDetailHTML(t){
+  const d=taskDetailCache[t.task_id];
+  if(!d)return `<div class="task-detail"><div class="task-empty-line">${d===false?'详情加载失败，重新点击可重试':'详情加载中…'}</div></div>`;
+  const steps=Array.isArray(d.steps)?d.steps:[];
+  const doneCount=steps.filter(s=>s&&s.ok).length;
+  const stepsHtml=steps.length?steps.map(s=>`<div class="task-step"><span class="ts-ic ${s&&s.ok?'ok':'bad'}">${s&&s.ok?'✓':'×'}</span><span class="ts-name">${esc(s?.action||'')}</span>${s&&!s.ok&&s.error?`<span class="ts-err">${esc(String(s.error).slice(0,60))}</span>`:''}</div>`).join('')
+    :`<div class="task-empty-line">暂无步骤记录</div>`;
+  const answer=d.final_answer?`<div class="task-d-label">最终回答</div><div class="task-answer">${esc(String(d.final_answer).slice(0,120))}${String(d.final_answer).length>120?'…':''}</div>`:'';
+  const errHtml=d.error?`<div class="task-d-label">错误信息</div><div class="task-answer">${esc(String(d.error).slice(0,120))}</div>`:'';
+  return `<div class="task-detail"><div class="task-d-label">执行步骤 · ${doneCount}/${steps.length}</div>${stepsHtml}${answer}${errHtml}</div>`;
+}
+function renderTaskList(){
+  const el=document.getElementById('taskList');
+  if(!el)return;
+  if(!currentTasks.length){
+    el.innerHTML=`<div class="src-empty">暂无后台任务。<br>后台执行的问题会在此显示状态与步骤进度。</div>`;
+    return;
+  }
+  el.innerHTML=currentTasks.map(t=>{
+    const q=String(t.question||'');
+    const short=q.length>24?`${q.slice(0,24)}…`:q;
+    const expanded=expandedTaskId===t.task_id;
+    return `<div class="task-item">
+      <div class="task-row ${expanded?'open':''}" onclick="toggleTaskDetail('${t.task_id}')">
+        <span class="task-badge st-${esc(t.status)}">${TASK_STATUS_LABEL[t.status]||esc(t.status)}</span>
+        <span class="task-q" title="${esc(q)}">${esc(short)}</span>
+        <span class="task-acts">${taskActionsHTML(t)}</span>
+        <span class="task-time">${esc(taskShortTime(t.updated_at||t.created_at))}</span>
+        <span class="task-caret">▶</span>
+      </div>
+      ${expanded?taskDetailHTML(t):''}
+    </div>`;
+  }).join('');
+}
+async function ensureTaskDetail(taskId,force=false){
+  const summary=currentTasks.find(t=>t.task_id===taskId);
+  const cached=taskDetailCache[taskId];
+  if(!force){
+    if(cached&&(!summary||cached.updated_at===summary.updated_at))return;
+    if(cached===false&&(!summary||TASK_TERMINAL.has(summary.status)))return;
+  }
+  try{
+    const r=await fetch(`/api/tasks/${encodeURIComponent(taskId)}`,{cache:'no-store'});
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    const d=await r.json();
+    if(d.error)throw new Error(d.error);
+    taskDetailCache[taskId]=d;
+  }catch(_error){taskDetailCache[taskId]=false;}
+}
+async function toggleTaskDetail(taskId){
+  expandedTaskId=expandedTaskId===taskId?null:taskId;
+  renderTaskList();
+  if(!expandedTaskId)return;
+  await ensureTaskDetail(taskId,true);
+  renderTaskList();
+}
+async function loadTasks(force=false){
+  try{
+    const r=await fetch('/api/tasks',{cache:'no-store'});
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    const data=await r.json();
+    currentTasks=Array.isArray(data.tasks)?data.tasks:[];
+  }catch(_error){/* 后端未连接时静默保留现有列表 */}
+  const sig=currentTasks.map(t=>`${t.task_id}:${t.status}:${t.updated_at}`).join('|');
+  const changed=force||sig!==taskListSig;
+  taskListSig=sig;
+  if(changed){
+    if(expandedTaskId&&currentTasks.some(t=>t.task_id===expandedTaskId))await ensureTaskDetail(expandedTaskId);
+    renderTaskList();
+  }
+  syncTaskPolling();
+}
+async function taskAction(taskId,action){
+  try{
+    const r=await fetch(`/api/tasks/${encodeURIComponent(taskId)}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'}});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok||data.error)throw new Error(data.error||`操作失败（${r.status}）`);
+    showToast(action==='pause'?'任务已暂停':action==='resume'?'任务已继续':'任务已取消');
+    delete taskDetailCache[taskId];
+    await loadTasks(true);
+  }catch(error){showToast(requestErrorMessage(error),true);}
+}
+let taskPollMs=0;
+function syncTaskPolling(){
+  // 页面可见时始终保持发现轮询：有活跃任务 2s，空闲 8s（否则后创建的任务永远无法被发现）
+  const want=!document.hidden?(hasActiveTask()?2000:8000):0;
+  if(want&&want!==taskPollMs){
+    if(taskPollTimer)clearInterval(taskPollTimer);
+    taskPollTimer=setInterval(()=>{loadTasks();},want);
+    taskPollMs=want;
+  }
+  if(!want&&taskPollTimer){clearInterval(taskPollTimer);taskPollTimer=null;taskPollMs=0;}
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){syncTaskPolling();}
+  else{loadTasks();}
+});
 
 /* ================= SEND FLOW ================= */
 function matchAnswer(text){
@@ -1369,6 +1537,7 @@ document.addEventListener('keydown', e=>{
 renderStepsIdle();
 syncSendBtn();
 renderMessages();
+loadTasks();
 sendHeartbeat();
 setInterval(sendHeartbeat,3000);
 loadWorkspaces().then(refreshStatus).catch(()=>{

@@ -468,12 +468,13 @@ class Agent:
 
     def finish_task(
         self, question: str, plan: Plan, steps: list[StepResult], history_text: str = ""
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], object]:
         """任务路径的合成阶段（S5）：合成最终答案并校验引用，不写任何记忆。
 
         与 ask 的第 3/3.5 阶段逻辑一致：复用 _synthesize 与 _collect_sources，
         并按实际来源数校验正文 [n] 引用（非法编号从答案中剔除）。
-        返回 (final_answer, sources)。
+        返回 (final_answer, sources, report)——report 为 CitationReport，
+        valid/invalid 计数随任务记录持久化（T2 写回会话时展示）。
         """
         final_answer = self._synthesize(question, plan, steps, history_text)
         sources = self._collect_sources(steps)
@@ -483,7 +484,7 @@ class Agent:
                 "引用校验：剔除 %d 个非法引用编号 %s（实际来源数=%d）",
                 report.invalid_count, report.invalid_numbers, len(sources),
             )
-        return report.cleaned_text, sources
+        return report.cleaned_text, sources, report
 
     @staticmethod
     def _trajectory(steps: list[StepResult]) -> list[dict]:

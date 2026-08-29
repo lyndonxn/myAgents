@@ -441,9 +441,11 @@ class TaskRunner:
         # ---- 阶段 3：合成 + 引用校验（持锁；任务路径不做反思，步骤完成后直接合成） ----
         ordered = [executor._history[s.step_id] for s in plan.steps if s.step_id in executor._history]
         with self.lock:
-            final_answer, sources = agent.finish_task(record.question, plan, ordered, history_text)
+            final_answer, sources, report = agent.finish_task(record.question, plan, ordered, history_text)
         record.final_answer = final_answer
         record.sources = list(sources)
+        record.citations_valid = report.valid_count  # T2：随记录持久化，写回会话时展示
+        record.citations_invalid = report.invalid_count
         record.status = STATUS_COMPLETED
         sync_usage()
         self.store.update(record)

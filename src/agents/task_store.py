@@ -59,6 +59,8 @@ class TaskRecord:
     error: str = ""
     sources: list = field(default_factory=list)     # 最终答案引用的来源清单
     usage: dict = field(default_factory=dict)       # {prompt_tokens, completion_tokens, cost_yuan}
+    citations_valid: int = 0                        # 引用校验通过数（T2：随答案写回会话展示）
+    citations_invalid: int = 0                      # 被剔除的非法引用数
     created_at: str = ""
     updated_at: str = ""
 
@@ -73,6 +75,14 @@ class TaskRecord:
         usage = data.get("usage")
         steps = data.get("steps")
         sources = data.get("sources")
+        try:
+            valid = int(data.get("citations_valid", 0) or 0)
+        except (TypeError, ValueError):
+            valid = 0
+        try:
+            invalid = int(data.get("citations_invalid", 0) or 0)
+        except (TypeError, ValueError):
+            invalid = 0
         return cls(
             task_id=str(data.get("task_id", "")),
             session_id=str(data.get("session_id", "")),
@@ -85,6 +95,8 @@ class TaskRecord:
             error=str(data.get("error", "")),
             sources=[str(s) for s in sources] if isinstance(sources, list) else [],
             usage=usage if isinstance(usage, dict) else {},
+            citations_valid=valid,
+            citations_invalid=invalid,
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )

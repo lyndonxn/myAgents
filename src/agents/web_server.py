@@ -191,6 +191,8 @@ class Handler(BaseHTTPRequestHandler):
         metrics["task_id"] = record.task_id
         metrics["prompt_tokens"] = int(usage.get("prompt_tokens", 0))
         metrics["completion_tokens"] = int(usage.get("completion_tokens", 0))
+        metrics["citations_valid"] = int(getattr(record, "citations_valid", 0) or 0)
+        metrics["citations_invalid"] = int(getattr(record, "citations_invalid", 0) or 0)
         metrics["cost_yuan"] = round(float(usage.get("cost_yuan", 0.0)), 4)
         with cls.lock:
             store.add_message(record.session_id, "user", record.question)

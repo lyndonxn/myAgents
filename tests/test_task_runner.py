@@ -499,6 +499,8 @@ def test_acc_t1_01_completed_writeback():
             assert msgs[1]["content"] == rec.final_answer == "任务最终答案[1]"
             assert msgs[1]["sources"] == rec.sources == ["kb://q1.md"], "sources 应与 record 一致"
             assert msgs[1]["metrics"]["task_id"] == tid
+            assert msgs[1]["metrics"]["citations_valid"] == rec.citations_valid
+            assert msgs[1]["metrics"]["citations_invalid"] == rec.citations_invalid
             assert msgs[1]["metrics"]["prompt_tokens"] == rec.usage["prompt_tokens"]
             assert msgs[1]["metrics"]["completion_tokens"] == rec.usage["completion_tokens"]
             assert msgs[1]["metrics"]["cost_yuan"] == round(rec.usage["cost_yuan"], 4)
