@@ -45,6 +45,7 @@ llm:
   max_tokens: 2048
   timeout: 60            # 单次请求超时（秒）
   max_retries: 3
+  json_repair_rounds: 1  # chat_json 解析失败后的修复轮数（0=关闭）
 
 # 规划层配置
 planner:
@@ -56,6 +57,8 @@ planner:
 # 工具层配置
 tools:
   search_default_top_k: 5
+  max_retries: 1         # 工具步骤失败后的重试次数（总尝试次数 = 1 + 该值；参数校验失败不重试）
+  kb_fallback_web: true  # 知识库检索重试耗尽仍失败时，自动降级用 Web 搜索
   calculator_enabled: true
   time_enabled: true
   topics_enabled: true

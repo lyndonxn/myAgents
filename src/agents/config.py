@@ -208,6 +208,11 @@ class Config:
     def llm_max_retries(self) -> int:
         return int(self.get("llm.max_retries", 3))
 
+    @property
+    def llm_json_repair_rounds(self) -> int:
+        """chat_json 解析失败后的修复轮数（0=关闭）。"""
+        return int(self.get("llm.json_repair_rounds", 1))
+
     # ---- 视觉模型（图片搜索，OpenAI 兼容，如 GLM-4V / Qwen-VL / GPT-4o） ----
     @property
     def vision_model(self) -> str:
@@ -244,6 +249,16 @@ class Config:
     @property
     def search_default_top_k(self) -> int:
         return int(self.get("tools.search_default_top_k", 5))
+
+    @property
+    def tools_max_retries(self) -> int:
+        """工具步骤失败后的重试次数（总尝试次数 = 1 + 该值）。"""
+        return int(self.get("tools.max_retries", 1))
+
+    @property
+    def kb_fallback_web(self) -> bool:
+        """知识库检索重试耗尽仍失败时，是否降级用 Web 搜索。"""
+        return bool(self.get("tools.kb_fallback_web", True))
 
     @property
     def tools_enabled(self) -> dict[str, bool]:

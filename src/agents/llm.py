@@ -127,14 +127,40 @@ class LLMClient:
         return self._chat(messages, **kwargs)
 
     def chat_json(self, messages: list[dict], **kwargs) -> object:
-        """要求 JSON 输出并稳健解析；解析失败抛 LLMError。"""
+        """要求 JSON 输出并稳健解析；解析失败走修复轮，耗尽后抛 LLMError。
+
+        修复轮与 _chat 的网络重试是两层：本方法在"模型已返回但解析失败"时，
+        把坏输出连同修复指令追加进对话再请求（llm.json_repair_rounds 轮）。
+        """
         use_format = self.config.llm_chat_model.startswith(("deepseek-chat", "deepseek-reasoner"))
-        result = self._chat(
-            messages,
-            response_format={"type": "json_object"} if use_format else None,
-            **kwargs,
-        )
-        return parse_json_robust(result.text)
+        response_format = {"type": "json_object"} if use_format else None
+        result = self._chat(messages, response_format=response_format, **kwargs)
+        try:
+            return parse_json_robust(result.text)
+        except LLMError as first_err:
+            rounds = max(0, int(getattr(self.config, "llm_json_repair_rounds", 1) or 0))
+            if rounds <= 0:
+                raise
+            convo = list(messages)
+            bad_text, last_err = result.text, first_err
+            for _ in range(rounds):
+                convo = convo + [
+                    {"role": "assistant", "content": bad_text},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"你的输出无法解析为 JSON：{last_err}。"
+                            "请只输出修正后的合法 JSON，不要任何其他文字。"
+                        ),
+                    },
+                ]
+                result = self._chat(convo, response_format=response_format, **kwargs)
+                try:
+                    return parse_json_robust(result.text)
+                except LLMError as err:
+                    bad_text, last_err = result.text, err
+            # 修复轮耗尽仍失败：保留首次解析错误信息
+            raise LLMError(f"{first_err}（经过 {rounds} 轮修复仍失败，最后错误: {last_err}）") from last_err
 
     # ---- 成本估算（DeepSeek 定价，元/百万 token） ----
     PRICING = {"input": 1.0, "output": 2.0}  # deepseek-chat 官方定价（元/1M tokens）

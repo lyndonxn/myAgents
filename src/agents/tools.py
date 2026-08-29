@@ -7,6 +7,10 @@
 
 执行上下文 ToolContext 向工具注入检索器 / 配置 / LLM 等依赖，
 避免工具直接持有全局状态。工具错误由执行器捕获，不影响整体问答。
+
+参数校验（S1 工具层强化）：validate_tool_input 按工具 parameters JSON Schema
+校验并纠偏入参（required 缺失报错、未知键剔除、字符串数字纠偏、整数 clamp），
+执行器在调用工具前先校验，校验失败不重试。
 """
 from __future__ import annotations
 
@@ -15,6 +19,10 @@ import datetime as _dt
 import operator
 from dataclasses import dataclass, field
 from typing import Any, Callable
+
+from .logger import get_logger
+
+LOG = get_logger("tools")
 
 
 @dataclass
@@ -39,6 +47,101 @@ class ToolContext:
     llm: Any = None
     chunks: list = field(default_factory=list)
     web_search: Any = None
+
+
+# ---------------- 参数校验（S1 工具层强化） ----------------
+
+class ToolValidationError(ValueError):
+    """工具入参不符合 JSON Schema（缺 required、类型无法纠偏等），重试无法恢复。"""
+
+
+def _coerce_by_schema(value: Any, prop: dict, name: str) -> Any:
+    """按 schema 属性定义纠偏单个参数值，并按 minimum/maximum clamp 数值。
+
+    纠偏失败（如把 "abc" 纠偏为整数）抛 ToolValidationError。
+    """
+    expected = prop.get("type")
+    if expected is None or value is None:
+        return value
+    if expected == "string":
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (bool, int, float)):
+            return str(value)
+        raise ToolValidationError(f"参数 {name} 期望 string，实际 {type(value).__name__}")
+    if expected in ("integer", "number"):
+        if isinstance(value, bool):
+            raise ToolValidationError(f"参数 {name} 期望 {expected}，实际为布尔值")
+        if isinstance(value, int):
+            num: int | float = value
+        elif isinstance(value, float):
+            if expected == "integer" and not value.is_integer():
+                raise ToolValidationError(f"参数 {name} 期望整数，实际 {value}")
+            num = value
+        elif isinstance(value, str):
+            text = value.strip()
+            try:
+                num = int(text)
+            except ValueError:
+                try:
+                    num = float(text)
+                except ValueError as float_err:
+                    raise ToolValidationError(
+                        f"参数 {name} 期望 {expected}，无法把 {value!r} 纠偏为数字"
+                    ) from float_err
+            if expected == "integer":
+                if isinstance(num, float) and not num.is_integer():
+                    raise ToolValidationError(f"参数 {name} 期望整数，无法把 {value!r} 纠偏为整数")
+                num = int(num)
+        else:
+            raise ToolValidationError(f"参数 {name} 期望 {expected}，实际 {type(value).__name__}")
+        minimum, maximum = prop.get("minimum"), prop.get("maximum")
+        if minimum is not None and num < minimum:
+            num = minimum
+        if maximum is not None and num > maximum:
+            num = maximum
+        return num
+    if expected == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ("true", "1"):
+                return True
+            if lowered in ("false", "0"):
+                return False
+            raise ToolValidationError(f"参数 {name} 期望 boolean，无法把 {value!r} 纠偏为布尔值")
+        if isinstance(value, (int, float)):
+            return bool(value)
+        raise ToolValidationError(f"参数 {name} 期望 boolean，实际 {type(value).__name__}")
+    return value  # array / object 等其他类型不做处理
+
+
+def validate_tool_input(tool: Tool, kwargs: dict) -> dict:
+    """按工具 parameters 的 JSON Schema 校验并纠偏入参，返回新的干净参数字典。
+
+    - required 缺失（或值为 None）→ 抛 ToolValidationError（执行器不重试）
+    - 未知键 → 剔除并 LOG.warning
+    - 字符串数字按 schema type 纠偏（"5"→5、"true"→True）
+    - 整数按 schema 的 minimum/maximum clamp（工具函数内部已有的 clamp 保持不动）
+    - schema 缺少 properties 键时视为未声明参数，原样放行
+    """
+    schema = tool.parameters if isinstance(tool.parameters, dict) else {}
+    if "properties" not in schema:
+        return dict(kwargs)
+    props = schema.get("properties") or {}
+    required = schema.get("required") or []
+    missing = [key for key in required if kwargs.get(key) is None]
+    if missing:
+        raise ToolValidationError(f"缺少必填参数: {', '.join(missing)}")
+    out: dict = {}
+    for key, value in kwargs.items():
+        if key not in props:
+            LOG.warning("工具 %s 收到未知参数 %s=%r，已剔除", tool.name, key, value)
+            continue
+        prop = props[key] if isinstance(props[key], dict) else {}
+        out[key] = _coerce_by_schema(value, prop, key)
+    return out
 
 
 # ---------------- 内置工具实现 ----------------
