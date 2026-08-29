@@ -9,6 +9,7 @@ Agent 持有：
 ask(question) 返回结构化 Answer：计划、步骤结果、最终答案、引用来源、延迟与 Token 用量。
 首轮执行后按配置做反思重规划（S2 ReAct 迭代）：规划器审视步骤轨迹决定是否补步，
 补步续号追加执行（总步数硬上限 planner.max_steps*2），全部结束后统一合成一次。
+生成完成后按实际来源数校验正文 [n] 引用（S3），剔除幻觉引用并回填计数。
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from dataclasses import dataclass, field
 
 from .bm25 import BM25Index
 from .chunking import Chunk, Leaf, summarize_corpus
+from .citations import validate_citations
 from .embeddings import build_backend
 from .executor import Executor, StepResult
 from .llm import LLMClient, LLMError
@@ -46,6 +48,8 @@ class Answer:
     steps: list[StepResult] = field(default_factory=list)
     final_answer: str = ""
     sources: list[str] = field(default_factory=list)
+    citations_valid: int = 0      # 正文合法 [n] 引用数（S3 引用校验）
+    citations_invalid: int = 0    # 已剔除的非法 [n] 引用数
     total_latency_s: float = 0.0
     llm_calls: int = 0
     prompt_tokens: int = 0
@@ -305,6 +309,17 @@ class Agent:
             answer.final_answer = self._synthesize(question, answer.plan, answer.steps, history_text)
             answer.llm_calls += 1
             answer.sources = self._collect_sources(answer.steps)
+            # 3.5 引用校验（S3）：sources 在 ask 层收集，故在此按实际来源数校验
+            # 正文 [n] 标记，剔除幻觉引用后回填计数。
+            report = validate_citations(answer.final_answer, len(answer.sources))
+            if report.invalid_count:
+                LOG.warning(
+                    "引用校验：剔除 %d 个非法引用编号 %s（实际来源数=%d）",
+                    report.invalid_count, report.invalid_numbers, len(answer.sources),
+                )
+            answer.final_answer = report.cleaned_text
+            answer.citations_valid = report.valid_count
+            answer.citations_invalid = report.invalid_count
             answer.prompt_tokens = self.prompt_tokens
             answer.completion_tokens = self.completion_tokens
             answer.estimated_cost = self.estimated_cost
@@ -410,20 +425,15 @@ class Agent:
                     print(f"  · {step.display()}")
 
     def _synthesize(self, question: str, plan: Plan, steps: list[StepResult], history_text: str = "") -> str:
+        # 组装各成功步骤的输出作为生成上下文；来源编号即 sources 收集顺序，
+        # 正文 [n] 引用的合法性由 ask 层按 len(sources) 校验（S3）。
         context_parts: list[str] = []
-        citation = 1
-        source_map: dict[str, list[int]] = {}
         for step in steps:
             if not step.ok or step.action == "none":
                 continue
             out = step.output
             if isinstance(out, dict) and "text" in out:
                 text = str(out["text"])
-                srcs = out.get("sources") or []
-                # 把工具输出里的 [n] 片段重编为全局引用号
-                for src in srcs:
-                    source_map.setdefault(src, []).append(citation)
-                    citation += 1
                 context_parts.append(f"【工具: {step.action}】\n{text}")
 
         history_block = f"对话历史：\n{history_text}\n\n" if history_text else ""

@@ -4,7 +4,12 @@
 在 Codex 上运行并对比（见 benchmark/README.md）。
 
 指标：答案、耗时、Token 用量、估算成本、检索命中率
-（期望关键词是否出现在答案中 / 期望来源文件是否被召回）。
+（期望关键词是否出现在答案中 / 期望来源文件是否被召回）、
+引用幻觉率（非法 [n] 引用占比，S3 引用校验）与任务完成率
+（keyword_hit 与 source_hit 同时达到阈值）。
+
+可选 --judge（默认关，付费）：用 LLM 评审每题答案是否被检索证据
+支撑（0=无证据支撑 / 1=部分支撑 / 2=有证据支撑），输出 JSON。
 """
 from __future__ import annotations
 
@@ -46,6 +51,77 @@ def section_hit(retrieved_chunks, expected_sections: list[str]) -> float:
     return hits / len(expected_sections)
 
 
+def summarize_results(results: list[dict], threshold: float = 0.5) -> dict:
+    """纯函数汇总：按 results 记录计算各项总览指标。
+
+    - completion_rate：task_completed 比例（keyword_hit 与 source_hit 均达 threshold）；
+    - hallucination_rate：全部题目非法引用合计 /（合法+非法）合计，无引用记 0；
+    - 另含平均/最大延迟、总成本、退化率（fallback 题数占比）与 judge 均分。
+    """
+    n = len(results)
+    if n == 0:
+        return {
+            "questions": 0, "threshold": threshold, "completion_rate": 0.0,
+            "hallucination_rate": 0.0, "avg_latency_s": 0.0, "max_latency_s": 0.0,
+            "total_cost_yuan": 0.0, "fallback_rate": 0.0, "judge_avg": None,
+        }
+    completed = sum(
+        1 for r in results
+        if r["metrics"]["keyword_hit"] >= threshold and r["metrics"]["source_hit"] >= threshold
+    )
+    total_valid = sum(r["metrics"].get("citations_valid", 0) for r in results)
+    total_invalid = sum(r["metrics"].get("citations_invalid", 0) for r in results)
+    latencies = [r["metrics"]["latency_s"] for r in results]
+    fallbacks = sum(1 for r in results if r.get("plan", {}).get("fallback"))
+    scores = [
+        r["judge"]["score"] for r in results
+        if isinstance(r.get("judge"), dict) and r["judge"].get("score") is not None
+    ]
+    return {
+        "questions": n,
+        "threshold": threshold,
+        "completion_rate": completed / n,
+        "hallucination_rate": (total_invalid / (total_valid + total_invalid)) if (total_valid + total_invalid) else 0.0,
+        "avg_latency_s": round(sum(latencies) / n, 2),
+        "max_latency_s": round(max(latencies), 2),
+        "total_cost_yuan": round(sum(r["metrics"]["cost_yuan"] for r in results), 5),
+        "fallback_rate": fallbacks / n,
+        "judge_avg": round(sum(scores) / len(scores), 2) if scores else None,
+    }
+
+
+JUDGE_SYSTEM = (
+    "你是问答质量评审员。判断候选答案是否被检索证据支撑："
+    "2=有证据支撑（关键论断在来源中找得到依据）；1=部分支撑；0=无证据支撑（疑似编造）。"
+    '只输出 JSON：{"score": 0|1|2, "reason": "一句话理由"}'
+)
+
+
+def judge_answer(llm, question: str, answer_text: str, sources: list[str]) -> dict:
+    """LLM 评审答案的证据支撑度（0/1/2 分）；解析失败记 score=None，不抛异常。"""
+    src_block = "\n".join(f"- {s}" for s in sources) or "-（无来源）"
+    user = (
+        f"问题：{question}\n\n检索到的来源：\n{src_block}\n\n"
+        f"候选答案：\n{answer_text[:2000]}\n\n请评审答案是否被上述检索证据支撑，只输出 JSON。"
+    )
+    try:
+        obj = llm.chat_json(
+            [
+                {"role": "system", "content": JUDGE_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.0,
+            max_tokens=200,
+        )
+    except Exception as exc:  # noqa: BLE001 - 评审失败不阻塞评测
+        return {"score": None, "reason": f"评审失败: {exc}"}
+    score = obj.get("score") if isinstance(obj, dict) else None
+    if isinstance(score, bool) or score not in (0, 1, 2):
+        score = None
+    reason = str(obj.get("reason", ""))[:300] if isinstance(obj, dict) else ""
+    return {"score": score, "reason": reason}
+
+
 def run_retrieval_only(questions: list[dict], config, top_k: int | None = None) -> None:
     """只测检索命中率：对每题直接检索，检查期望来源文件/章节是否被召回（不调 LLM）。"""
     from agents.agent import Agent
@@ -84,6 +160,10 @@ def main() -> None:
     parser.add_argument("--rerank", choices=["off", "auto", "cross_encoder", "llm"], default=None,
                         help="覆盖重排模式（默认取配置）")
     parser.add_argument("--multi-query", action="store_true", help="开启多查询扩展")
+    parser.add_argument("--complete-threshold", type=float, default=0.5,
+                        help="任务完成判定阈值：keyword_hit 与 source_hit 均需 >= 该值（默认 0.5）")
+    parser.add_argument("--judge", action="store_true",
+                        help="用 LLM 评审每题答案的证据支撑度（付费，默认关闭）")
     args = parser.parse_args()
 
     questions = json.loads((ROOT / "questions.json").read_text(encoding="utf-8"))
@@ -99,6 +179,7 @@ def main() -> None:
     llm = LLMClient(config)
     agent = Agent(config, llm=llm)
     agent.load_index()
+    threshold = args.complete_threshold
 
     results = []
     for item in questions:
@@ -106,6 +187,10 @@ def main() -> None:
         t0 = time.monotonic()
         answer = agent.ask(item["question"])
         latency = time.monotonic() - t0
+        kw = keyword_hit(answer.final_answer, item.get("expected_keywords", []))
+        src = source_hit(answer.sources, item.get("expected_files", []))
+        cit_valid, cit_invalid = answer.citations_valid, answer.citations_invalid
+        cit_total = cit_valid + cit_invalid
         record = {
             "id": qid,
             "question": item["question"],
@@ -125,17 +210,25 @@ def main() -> None:
                 "prompt_tokens": answer.prompt_tokens,
                 "completion_tokens": answer.completion_tokens,
                 "cost_yuan": round(answer.estimated_cost, 5),
-                "keyword_hit": round(keyword_hit(answer.final_answer, item.get("expected_keywords", [])), 2),
-                "source_hit": round(source_hit(answer.sources, item.get("expected_files", [])), 2),
+                "keyword_hit": round(kw, 2),
+                "source_hit": round(src, 2),
+                "citations_valid": cit_valid,
+                "citations_invalid": cit_invalid,
+                "citation_hallucination": round(cit_invalid / cit_total, 4) if cit_total else 0.0,
+                "task_completed": 1.0 if (kw >= threshold and src >= threshold) else 0.0,
             },
+            "judge": judge_answer(llm, item["question"], answer.final_answer, answer.sources) if args.judge else None,
             "error": answer.error,
         }
         m = record["metrics"]
         print(f"[{qid}] kw={m['keyword_hit']:.0%} src={m['source_hit']:.0%} "
+              f"halluc={m['citation_hallucination']:.0%} done={'是' if m['task_completed'] else '否'} "
               f"{m['latency_s']:.1f}s cost=¥{m['cost_yuan']:.4f} | {item['question'][:36]}")
         results.append(record)
 
-    out = {"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "engine": "myAgents", "results": results}
+    summary = summarize_results(results, threshold=threshold)
+    out = {"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "engine": "myAgents",
+           "summary": summary, "results": results}
     out_path = ROOT / "results.json"
     out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n结果已写入 {out_path}")
@@ -152,6 +245,20 @@ def main() -> None:
     avg_kw = sum(r["metrics"]["keyword_hit"] for r in results) / len(results)
     avg_src = sum(r["metrics"]["source_hit"] for r in results) / len(results)
     md.append(f"| **平均** | | **{avg_kw:.0%}** | **{avg_src:.0%}** | | | | |")
+
+    # 汇总段（S3）
+    md += [
+        "",
+        "## 汇总",
+        f"- 题数：{summary['questions']}（任务完成阈值 {summary['threshold']}）",
+        f"- 任务完成率 completion_rate：{summary['completion_rate']:.0%}",
+        f"- 引用幻觉率 hallucination_rate：{summary['hallucination_rate']:.1%}",
+        f"- 平均 / 最大延迟：{summary['avg_latency_s']:.1f}s / {summary['max_latency_s']:.1f}s",
+        f"- 总成本：¥{summary['total_cost_yuan']:.4f}",
+        f"- 退化率（fallback 题数占比）：{summary['fallback_rate']:.0%}",
+    ]
+    if summary["judge_avg"] is not None:
+        md.append(f"- LLM 评审均分 judge_avg：{summary['judge_avg']:.2f} / 2")
     (ROOT / "results.md").write_text("\n".join(md), encoding="utf-8")
     print(f"汇总表已写入 {ROOT / 'results.md'}")
 
