@@ -228,12 +228,8 @@ def test_acc_s3_03_retrieval_only_unchanged():
         "MCP 是什么": [_FakeHit("mcp.md", "MCP/三个参与者")],
     }
 
-    orig = agent_module.Agent
-    agent_module.Agent = lambda config: fake  # 打桩：run_retrieval_only 内部 from ... import Agent
-    try:
-        rows = rb.run_retrieval_only(questions, SimpleNamespace(top_k=6), top_k=2)
-    finally:
-        agent_module.Agent = orig
+    # T4 起 run_retrieval_only 支持 agent 注入（--kb 内存索引场景），测试直接注入假 Agent
+    rows = rb.run_retrieval_only(questions, SimpleNamespace(top_k=6), top_k=2, agent=fake)
 
     assert len(rows) == 2
     qid, q, src, sec, files = rows[0]
@@ -244,11 +240,7 @@ def test_acc_s3_03_retrieval_only_unchanged():
 
     # 未命中场景：hit 值正确降低，不抛异常
     fake.retriever._hits["什么是 RAG"] = [_FakeHit("unrelated.md", "无关章节")]
-    agent_module.Agent = lambda config: fake
-    try:
-        rows2 = rb.run_retrieval_only([questions[0]], SimpleNamespace(top_k=6), top_k=2)
-    finally:
-        agent_module.Agent = orig
+    rows2 = rb.run_retrieval_only([questions[0]], SimpleNamespace(top_k=6), top_k=2, agent=fake)
     assert rows2[0][2] == 0.0 and rows2[0][3] == 0.0
 
     print("✓ ACC-S3-03 run_retrieval_only 既有行为不变（假检索器跑通）")
