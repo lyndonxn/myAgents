@@ -138,6 +138,10 @@ class Handler(BaseHTTPRequestHandler):
         message_id = self.store.add_message(
             session_id, "assistant", payload["answer"], payload["sources"], payload["plan"], payload["metrics"]
         )
+        # 持久化会话记忆滚动摘要（S4）：ask 内 maybe_compress 已更新，落库跨重启复用
+        summary = getattr(self.agent.memory, "summary", "")
+        if summary:
+            self.store.set_summary(session_id, summary)
         kb_hit = bool(payload["sources"]) and any(not str(source).startswith("http") for source in payload["sources"])
         self.store.record_query(workspace_id, session_id, kb_hit)
         payload["message_id"] = message_id
@@ -341,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with self.lock:  # 串行化问答，保护共享 Agent 与会话记忆
                 self.agent.memory = self.store.memory(session_id)
-                answer = self.agent.ask(question)
+                answer = self.agent.ask(question, session_id=session_id)  # S4：长期记忆按会话读写
             LOG.info("问答 | q=%s | %ds | tokens in=%d out=%d | err=%s",
                      question[:60], round(answer.total_latency_s, 1),
                      answer.prompt_tokens, answer.completion_tokens, answer.error or "-")
@@ -379,7 +383,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 with self.lock:
                     self.agent.memory = self.store.memory(session_id)
-                    answer = self.agent.ask(question)
+                    answer = self.agent.ask(question, session_id=session_id)  # S4：长期记忆按会话读写
                 response = self._persist_answer(session_id, workspace["id"], question, answer)
                 emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], plan=response["plan"], metrics=response["metrics"])
                 text = response["answer"]
@@ -429,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with self.lock:
                 self.agent.memory = self.store.memory(session_id)
-                answer = self.agent.ask(full_question)
+                answer = self.agent.ask(full_question, session_id=session_id)  # S4：长期记忆按会话读写
             LOG.info("图片问答 | q=%s | %ds | err=%s",
                      (question or "（无）")[:60], round(answer.total_latency_s, 1), answer.error or "-")
             response = self._persist_answer(session_id, workspace["id"], question or "图片问答", answer)

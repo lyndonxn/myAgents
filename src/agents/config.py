@@ -270,6 +270,27 @@ class Config:
         """知识库检索重试耗尽仍失败时，是否降级用 Web 搜索。"""
         return bool(self.get("tools.kb_fallback_web", True))
 
+    # ---- 记忆体系（S4：长期记忆 + 实体记忆 + 会话摘要压缩） ----
+    @property
+    def memory_long_term_enabled(self) -> bool:
+        """是否启用跨会话长期记忆（成功问答写入经验，规划时召回相关历史）。"""
+        return bool(self.get("memory.long_term_enabled", True))
+
+    @property
+    def memory_entities_enabled(self) -> bool:
+        """是否启用实体记忆（从问答中抽取关键实体及其事实）。"""
+        return bool(self.get("memory.entities_enabled", True))
+
+    @property
+    def memory_max_episodes(self) -> int:
+        """长期记忆最多保留的经验条数，超出按命中率与新旧淘汰。"""
+        return int(self.get("memory.max_episodes", 200))
+
+    @property
+    def memory_embedding_backend(self) -> str:
+        """长期记忆向量后端：auto | local | tfidf（auto 优先本地模型，失败回退 TF-IDF）。"""
+        return str(self.get("memory.embedding_backend", "auto"))
+
     @property
     def tools_enabled(self) -> dict[str, bool]:
         return {

@@ -85,11 +85,20 @@ REFLECT_SYSTEM = """你是一个反思协调器（ReAct）：给定用户问题�
 """
 
 
-def build_planner_prompt(question: str, tool_descriptions: list[str], max_steps: int, history_text: str = "") -> list[dict]:
+def build_planner_prompt(
+    question: str,
+    tool_descriptions: list[str],
+    max_steps: int,
+    history_text: str = "",
+    longterm_text: str = "",
+) -> list[dict]:
     tools_text = "\n".join(f"- {d}" for d in tool_descriptions)
     history_block = f"对话历史：\n{history_text}\n\n" if history_text else ""
+    # 跨会话相关历史经验块（S4 长期记忆召回），仅在有内容时注入
+    longterm_block = f"{longterm_text}\n\n" if longterm_text else ""
     user = (
         f"{history_block}"
+        f"{longterm_block}"
         f"可用工具：\n{tools_text}\n\n"
         f"用户问题：{question}\n\n"
         "请输出规划 JSON。"
@@ -151,10 +160,10 @@ class Planner:
         self.config = config
         self.llm = llm
 
-    def plan(self, question: str, tool_descriptions: list[str], history_text: str = "") -> Plan:
+    def plan(self, question: str, tool_descriptions: list[str], history_text: str = "", longterm_text: str = "") -> Plan:
         max_steps = self.config.planner_max_steps
         try:
-            messages = build_planner_prompt(question, tool_descriptions, max_steps, history_text)
+            messages = build_planner_prompt(question, tool_descriptions, max_steps, history_text, longterm_text)
             obj = self.llm.chat_json(
                 messages,
                 model=self.config.planner_model,

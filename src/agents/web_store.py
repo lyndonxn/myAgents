@@ -44,6 +44,11 @@ class WebStore:
                     kb_hit INTEGER NOT NULL, created_at TEXT NOT NULL
                 );
             """)
+            # 迁移：sessions.summary 保存会话记忆滚动摘要（S4）。
+            # 不持久化的话，每次 ask 重建记忆都会重新压缩并丢弃，白付一次 LLM 调用。
+            cols = [r["name"] for r in db.execute("PRAGMA table_info(sessions)")]
+            if "summary" not in cols:
+                db.execute("ALTER TABLE sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
 
     @staticmethod
     def _now():
@@ -88,7 +93,10 @@ class WebStore:
     def create_session(self, workspace_id: str, title: str = "新的会话"):
         sid, now = uuid.uuid4().hex, self._now()
         with self._connect() as db:
-            db.execute("INSERT INTO sessions VALUES (?,?,?,?,?)", (sid, workspace_id, title, now, now))
+            db.execute(
+                "INSERT INTO sessions(id,workspace_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
+                (sid, workspace_id, title, now, now),
+            )
         return sid
 
     def session_belongs_to(self, session_id: str, workspace_id: str) -> bool:
@@ -102,7 +110,7 @@ class WebStore:
             db.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
             db.execute("DELETE FROM query_events WHERE session_id=?", (session_id,))
             db.execute(
-                "UPDATE sessions SET title='新的会话', updated_at=? WHERE id=?",
+                "UPDATE sessions SET title='新的会话', summary='', updated_at=? WHERE id=?",
                 (self._now(), session_id),
             )
 
@@ -145,7 +153,17 @@ class WebStore:
             elif row["role"] == "assistant" and pending is not None:
                 memory.add(pending, row["content"], row["sources"], row["plan"].get("summary", ""))
                 pending = None
+        # 恢复会话记忆的滚动摘要（S4）：避免重建后重复压缩
+        with self._connect() as db:
+            row = db.execute("SELECT summary FROM sessions WHERE id=?", (session_id,)).fetchone()
+        if row and row["summary"]:
+            memory.summary = row["summary"]
         return memory
+
+    def set_summary(self, session_id: str, summary: str):
+        """保存会话记忆的滚动摘要（S4），跨重启复用，避免每次 ask 重复压缩。"""
+        with self._connect() as db:
+            db.execute("UPDATE sessions SET summary=? WHERE id=?", (summary or "", session_id))
 
     def feedback(self, message_id: int, value: str):
         if value not in ("up", "down", ""):

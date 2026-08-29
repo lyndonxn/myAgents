@@ -10,6 +10,9 @@ ask(question) 返回结构化 Answer：计划、步骤结果、最终答案、�
 首轮执行后按配置做反思重规划（S2 ReAct 迭代）：规划器审视步骤轨迹决定是否补步，
 补步续号追加执行（总步数硬上限 planner.max_steps*2），全部结束后统一合成一次。
 生成完成后按实际来源数校验正文 [n] 引用（S3），剔除幻觉引用并回填计数。
+记忆体系（S4）：规划前召回跨会话相关历史经验注入规划提示词；成功问答后抽取实体、
+写入长期记忆，并把会话记忆滑出窗口的轮次压缩为摘要。均受 memory.* 开关控制；
+长期记忆与实体记忆仅在提供 session_id 时读写（无会话调用保持原有行为，无额外副作用）。
 """
 from __future__ import annotations
 
@@ -25,6 +28,13 @@ from .llm import LLMClient, LLMError
 from .logger import get_logger
 
 LOG = get_logger("agent")
+from .long_memory import (
+    EPISODE_SUMMARY_MAX,
+    EntityMemory,
+    LongTermMemory,
+    MemoryEpisode,
+    build_memory_backend,
+)
 from .memory import SessionMemory
 from .planner import Plan, Planner, rewrite_query
 from .retriever import Retriever
@@ -81,8 +91,32 @@ class Agent:
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.estimated_cost = 0.0
+        # 长期记忆（S4）：延迟构建——首次访问 long_memory 才加载 embedding 后端，
+        # 避免构造 Agent 即加载向量模型（测试与无会话场景零开销）。
+        self._long_memory: LongTermMemory | None = None
+        # 实体记忆（S4）：轻量 JSON 存储，构造时直接加载
+        self.entity_memory: EntityMemory | None = None
+        if self.config.memory_entities_enabled:
+            self.entity_memory = EntityMemory(self.config.data_dir / "memory")
+            self.entity_memory.load()
         if not lazy_index:
             self.load_index()
+
+    @property
+    def long_memory(self) -> LongTermMemory | None:
+        """跨会话长期记忆（S4）。受 memory.long_term_enabled 开关控制；首次访问才构建。"""
+        if self._long_memory is None and self.config.memory_long_term_enabled:
+            self._long_memory = LongTermMemory(
+                self.config.data_dir / "memory",
+                build_memory_backend(self.config),
+                max_episodes=self.config.memory_max_episodes,
+            )
+            LOG.info("长期记忆已就绪: %s（episodes=%d）", self._long_memory.store_dir, self._long_memory.size)
+        return self._long_memory
+
+    @long_memory.setter
+    def long_memory(self, value: LongTermMemory | None) -> None:
+        self._long_memory = value
 
     # ================= 索引 =================
 
@@ -270,7 +304,7 @@ class Agent:
 
     # ================= 问答 =================
 
-    def ask(self, question: str, verbose: bool = False) -> Answer:
+    def ask(self, question: str, verbose: bool = False, session_id: str = "") -> Answer:
         if not self._index_loaded:
             self.load_index()
         self.ensure_llm()
@@ -285,9 +319,22 @@ class Agent:
                 q_work = rewrite_query(self.llm, question, history_text)
                 answer.llm_calls += 1
 
+            # 0.5 长期记忆召回（S4）：跨会话相关历史经验注入规划提示词。
+            # 仅在提供 session_id 时启用；排除本会话最近 2 条，避免刚发生的经验自我强化。
+            longterm_text = ""
+            if session_id:
+                try:
+                    lm = self.long_memory
+                    if lm is not None:
+                        longterm_text = lm.as_context(q_work, k=3, exclude_session_recent=(session_id, 2))
+                except Exception as exc:  # noqa: BLE001 - 记忆增强失败不影响问答
+                    LOG.warning("长期记忆召回失败，跳过: %s", exc)
+
             # 1. 规划（规划器能看到历史，从而理解追问；规则要求 search query 独立）
             planner = Planner(self.config, self.llm)
-            answer.plan = planner.plan(question, describe_tools(self.tools), history_text=history_text)
+            answer.plan = planner.plan(
+                question, describe_tools(self.tools), history_text=history_text, longterm_text=longterm_text
+            )
             answer.llm_calls += 1
             # 退化路径用改写后的独立查询兜底，避免指代词检索失败
             if answer.plan.fallback and q_work != question and answer.plan.steps:
@@ -333,6 +380,10 @@ class Agent:
             self.memory.add(
                 question, answer.final_answer, answer.sources, answer.plan.plan_summary
             )
+            # 4.5 会话记忆增强（S4）：滑出窗口的轮次压缩为摘要（有溢出才触发）
+            self.memory.maybe_compress(self.llm)
+            # 4.6 长期记忆与实体记忆（S4）：仅在提供 session_id 时写入
+            self._remember_long_term(question, answer, session_id)
         LOG.info(
             "ask | q=%s | %.1fs | calls=%d | in=%d out=%d | ¥%.4f | %s",
             question[:50].replace("\n", " "), answer.total_latency_s, answer.llm_calls,
@@ -340,6 +391,40 @@ class Agent:
             answer.error or "ok",
         )
         return answer
+
+    def _remember_long_term(self, question: str, answer: Answer, session_id: str) -> None:
+        """成功问答后的长期记忆写入（S4）：抽取实体并追加一条经验。
+
+        仅在提供 session_id 时生效（长期记忆按会话组织，且避免无会话调用产生
+        额外 LLM 调用与磁盘写入）；实体抽取失败得到空 dict，仍写入经验本体。
+        """
+        if not session_id:
+            return
+        entities: dict[str, str] = {}
+        if self.entity_memory is not None:
+            try:
+                answer.llm_calls += 1
+                entities = self.entity_memory.extract(self.llm, question, answer.final_answer)
+                if entities:
+                    self.entity_memory.merge(entities)
+                    self.entity_memory.save()
+            except Exception as exc:  # noqa: BLE001 - 实体记忆失败不影响问答
+                LOG.warning("实体记忆抽取/保存失败，跳过: %s", exc)
+        try:
+            lm = self.long_memory
+            if lm is None:
+                return
+            lm.add(
+                MemoryEpisode(
+                    session_id=session_id,
+                    question=question,
+                    answer_summary=answer.final_answer[:EPISODE_SUMMARY_MAX],
+                    sources=list(answer.sources),
+                    entities=dict(entities),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("长期记忆写入失败，跳过: %s", exc)
 
     @staticmethod
     def _trajectory(steps: list[StepResult]) -> list[dict]:

@@ -68,3 +68,10 @@ tools:
   web_search:
     timeout: 15              # 单次请求超时（秒）
     cache_ttl: 300           # 结果缓存时长（秒）
+
+# 记忆配置（S4：跨会话长期记忆 + 实体记忆 + 会话摘要压缩）
+memory:
+  long_term_enabled: true    # 跨会话长期记忆：成功问答写入经验，后续提问召回相关历史经验注入规划
+  entities_enabled: true     # 实体记忆：从问答中抽取关键实体及其事实（entities.json）
+  max_episodes: 200          # 长期记忆最多保留的经验条数，超出按命中率与新旧淘汰
+  embedding_backend: auto    # 长期记忆向量后端：auto | local | tfidf（auto 优先本地模型，失败回退 TF-IDF）

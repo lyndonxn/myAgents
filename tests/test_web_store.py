@@ -42,11 +42,17 @@ def run():
         reopened.clear_session(session_a)
         assert reopened.messages(session_a) == []
         assert reopened.session_belongs_to(session_a, "default")
+        assert reopened.memory(session_a).summary == ""  # 清会话同时清滚动摘要（S4）
 
         reopened.delete_session(session_b)
         assert not reopened.session_belongs_to(session_b, "default")
         assert reopened.messages(session_b) == []
         assert reopened.stats("default") == {"today_queries": 0, "kb_hits": 0, "hit_rate": 0.0}
+
+        # 会话记忆滚动摘要持久化（S4）：跨实例恢复，避免每次 ask 重复压缩
+        store.set_summary(session_a, "此前讨论过 RAG 分块与检索")
+        assert store.memory(session_a).summary == "此前讨论过 RAG 分块与检索"
+        assert WebStore(db_path).memory(session_a).summary == "此前讨论过 RAG 分块与检索"
 
     print("✓ web store persistence, isolation, deletion, feedback and stats")
 
