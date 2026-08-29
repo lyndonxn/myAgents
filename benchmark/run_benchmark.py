@@ -218,8 +218,13 @@ def main() -> None:
     for item in questions:
         qid = item["id"]
         t0 = time.monotonic()
+        # Agent.ask 返回会话累计用量（复用同一 Agent）——按题差值记录单题真实用量
+        prev_in, prev_out, prev_cost = agent.prompt_tokens, agent.completion_tokens, agent.estimated_cost
         answer = agent.ask(item["question"])
         latency = time.monotonic() - t0
+        q_in = agent.prompt_tokens - prev_in
+        q_out = agent.completion_tokens - prev_out
+        q_cost = agent.estimated_cost - prev_cost
         kw = keyword_hit(answer.final_answer, item.get("expected_keywords", []))
         src = source_hit(answer.sources, item.get("expected_files", []))
         cit_valid, cit_invalid = answer.citations_valid, answer.citations_invalid
@@ -240,9 +245,9 @@ def main() -> None:
             "metrics": {
                 "latency_s": round(latency, 2),
                 "agent_time_s": round(answer.total_latency_s, 2),
-                "prompt_tokens": answer.prompt_tokens,
-                "completion_tokens": answer.completion_tokens,
-                "cost_yuan": round(answer.estimated_cost, 5),
+                "prompt_tokens": q_in,
+                "completion_tokens": q_out,
+                "cost_yuan": round(q_cost, 5),
                 "keyword_hit": round(kw, 2),
                 "source_hit": round(src, 2),
                 "citations_valid": cit_valid,
