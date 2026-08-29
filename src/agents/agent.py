@@ -1,4 +1,4 @@
-"""Agent 门面：编排「规划 → 执行 → 生成」完整问答流程。
+"""Agent 门面：编排「规划 → 执行 → 反思重规划 → 生成」完整问答流程。
 
 Agent 持有：
 - 知识库索引（chunks + vector store + bm25）
@@ -7,6 +7,8 @@ Agent 持有：
 - LLM 客户端
 
 ask(question) 返回结构化 Answer：计划、步骤结果、最终答案、引用来源、延迟与 Token 用量。
+首轮执行后按配置做反思重规划（S2 ReAct 迭代）：规划器审视步骤轨迹决定是否补步，
+补步续号追加执行（总步数硬上限 planner.max_steps*2），全部结束后统一合成一次。
 """
 from __future__ import annotations
 
@@ -296,7 +298,10 @@ class Agent:
                 for step in answer.steps:
                     print(f"  · {step.display()}")
 
-            # 3. 生成（结合对话历史，保持连贯）
+            # 2.5 反思重规划（S2 ReAct 迭代）：执行后让规划器审视轨迹，必要时补步再执行
+            self._reflect_and_extend(answer, planner, executor, question, history_text, verbose=verbose)
+
+            # 3. 生成（结合对话历史，保持连贯；全部步骤结束后统一合成一次）
             answer.final_answer = self._synthesize(question, answer.plan, answer.steps, history_text)
             answer.llm_calls += 1
             answer.sources = self._collect_sources(answer.steps)
@@ -320,6 +325,89 @@ class Agent:
             answer.error or "ok",
         )
         return answer
+
+    @staticmethod
+    def _trajectory(steps: list[StepResult]) -> list[dict]:
+        """把步骤结果压缩为反思轨迹：每步 {step_id, action, ok, error, output 摘要≤300字符}。"""
+        traj: list[dict] = []
+        for r in steps:
+            if isinstance(r.output, dict) and "text" in r.output:
+                out_text = str(r.output["text"])
+            elif r.output is None:
+                out_text = ""
+            else:
+                out_text = str(r.output)
+            traj.append(
+                {
+                    "step_id": r.step_id,
+                    "action": r.action,
+                    "ok": r.ok,
+                    "error": r.error,
+                    "output": out_text[:300],
+                }
+            )
+        return traj
+
+    def _reflect_and_extend(
+        self,
+        answer: Answer,
+        planner: Planner,
+        executor: Executor,
+        question: str,
+        history_text: str,
+        verbose: bool = False,
+    ) -> None:
+        """首轮执行后的反思重规划（S2 ReAct 迭代）。
+
+        反思开关（planner.reflect）为总闸，关闭时即使有失败步骤也不反思；
+        开启时每轮执行后都会反思一次（任一步失败必然包含在内），受
+        planner.max_reflections 轮数与总步数硬上限 planner.max_steps*2 约束。
+        反思返回 need_more 且带有效步骤时追加执行（step_id 续号、超出硬上限截断），
+        Plan.rounds+1 并记录 reasoning；反思解析失败（LLMError）静默跳过补步。
+        """
+        if not bool(getattr(self.config, "planner_reflect", True)):
+            return
+        max_reflections = int(getattr(self.config, "planner_max_reflections", 1))
+        if max_reflections <= 0:
+            return
+        hard_cap = self.config.planner_max_steps * 2  # 追加后总步数硬上限
+        tool_descriptions = describe_tools(self.tools)
+        for _ in range(max_reflections):
+            budget = hard_cap - len(answer.plan.steps)
+            if budget <= 0:
+                LOG.info("反思跳过：总步数已达硬上限 %d", hard_cap)
+                break
+            answer.llm_calls += 1
+            try:
+                reflect_plan = planner.reflect(
+                    question,
+                    tool_descriptions,
+                    history_text,
+                    self._trajectory(answer.steps),
+                    remaining_budget=budget,
+                )
+            except LLMError as exc:
+                LOG.warning("反思重规划失败，跳过补步: %s", exc)
+                break
+            if not reflect_plan.steps:
+                if verbose and reflect_plan.reasoning:
+                    print(f"  [reflect] 无需补步：{reflect_plan.reasoning}")
+                break
+            # 新步骤 step_id 续号，并按硬上限截断；只执行新增步骤
+            new_steps = reflect_plan.steps[:budget]
+            base = len(answer.plan.steps)
+            for i, s in enumerate(new_steps):
+                s.step_id = base + i + 1
+            if verbose:
+                print(f"  [reflect] 第 {answer.plan.rounds + 1} 轮补步：{reflect_plan.reasoning}")
+            supplement = Plan(reasoning=reflect_plan.reasoning, steps=new_steps, plan_summary="反思补步")
+            answer.plan.steps.extend(new_steps)
+            answer.steps.extend(executor.execute(supplement))
+            answer.plan.rounds += 1
+            answer.plan.reflections.append(reflect_plan.reasoning)
+            if verbose:
+                for step in answer.steps[base:]:
+                    print(f"  · {step.display()}")
 
     def _synthesize(self, question: str, plan: Plan, steps: list[StepResult], history_text: str = "") -> str:
         context_parts: list[str] = []

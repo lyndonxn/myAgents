@@ -247,6 +247,16 @@ class Config:
         return bool(self.get("planner.fallback_direct", True))
 
     @property
+    def planner_reflect(self) -> bool:
+        """首轮执行后是否进行反思重规划（S2 ReAct 迭代总开关）。"""
+        return bool(self.get("planner.reflect", True))
+
+    @property
+    def planner_max_reflections(self) -> int:
+        """反思重规划的最多轮数（0=关闭反思重规划）。"""
+        return int(self.get("planner.max_reflections", 1))
+
+    @property
     def search_default_top_k(self) -> int:
         return int(self.get("tools.search_default_top_k", 5))
 

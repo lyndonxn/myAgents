@@ -12,9 +12,14 @@
 
 可用 action 由工具层注册表决定（传入工具描述）。
 规划失败或无需规划时退化为"直接单步检索"（fallback_direct）。
+
+反思重规划（S2 ReAct 迭代）：reflect() 在首轮执行后审视步骤轨迹
+（每步 ok/error/输出摘要），判断是否需要补步；输出 JSON
+{need_more, reasoning, steps:[...]}，解析失败抛 LLMError 由调用方静默吞掉。
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from .llm import LLMError
@@ -34,6 +39,8 @@ class Plan:
     steps: list[PlanStep] = field(default_factory=list)
     plan_summary: str = ""
     fallback: bool = False  # 是否走了退化路径
+    reflections: list[str] = field(default_factory=list)  # 各轮反思的 reasoning（S2 反思重规划）
+    rounds: int = 1  # 执行轮数（首轮规划为 1，每追加一轮补步 +1）
 
     @property
     def has_tool_steps(self) -> bool:
@@ -58,6 +65,23 @@ PLANNER_SYSTEM = """你是一个任务规划器，负责把用户的提问拆解
 5. 只使用下面给出的工具，不要编造工具名。
 6. 多轮对话中，如果当前问题指代了之前的话题（如"那它呢"、"再讲讲"），
    每个 search 的 query 必须结合对话历史改写为**独立的完整查询**，不能使用指代词。
+7. 后续步骤可在 input 的字符串值里引用之前步骤的输出（步骤数据传递）：
+   @step:N 代表步骤 N 输出的全文（text），@step:N.field 代表步骤 N 输出 JSON 的 field 字段
+   （如 @step:1.query 表示取步骤 1 输出里的 query）。步骤编号从 1 开始；
+   引用不可用时该占位符会替换为空字符串。
+"""
+
+REFLECT_SYSTEM = """你是一个反思协调器（ReAct）：给定用户问题、可用工具和已执行步骤的轨迹，\
+请判断现有信息是否足以回答问题；不足时规划少量补充步骤。
+
+规则：
+1. 输出必须是合法 JSON 对象，不要输出任何其他文字，结构为：
+{{"need_more": true 或 false, "reasoning": "判断理由（1-2 句）", "steps": []}}
+2. steps 元素结构与规划相同：{{"action": "工具名", "input": {{"参数名": 值}}, "purpose": "这一步要解决什么"}}；
+   现有信息已足够时 need_more 为 false 且 steps 为空数组，不要为了补步而补步。
+3. 只使用下面给出的工具，不要编造工具名；补步不超过 {max_steps} 步。
+4. 补步的 input 字符串值可用 @step:N / @step:N.field 引用已有步骤（含补步）的输出，
+   语法与规划器相同；引用失败时占位符会替换为空字符串。
 """
 
 
@@ -72,6 +96,31 @@ def build_planner_prompt(question: str, tool_descriptions: list[str], max_steps:
     )
     return [
         {"role": "system", "content": PLANNER_SYSTEM.format(max_steps=max_steps)},
+        {"role": "user", "content": user},
+    ]
+
+
+def build_reflect_prompt(
+    question: str,
+    tool_descriptions: list[str],
+    history_text: str,
+    trajectory: list[dict],
+    remaining_budget: int,
+) -> list[dict]:
+    """构建反思重规划 prompt：轨迹为每步 {step_id, action, ok, error, output 摘要} 列表。"""
+    tools_text = "\n".join(f"- {d}" for d in tool_descriptions)
+    history_block = f"对话历史：\n{history_text}\n\n" if history_text else ""
+    traj_text = json.dumps(trajectory, ensure_ascii=False, default=str)
+    user = (
+        f"{history_block}"
+        f"可用工具：\n{tools_text}\n\n"
+        f"用户问题：{question}\n\n"
+        f"已执行步骤轨迹（step_id / action / ok / error / 输出摘要）：\n{traj_text}\n\n"
+        f"补步数量上限：{max(0, remaining_budget)}。\n\n"
+        "请输出反思 JSON（need_more / reasoning / steps）。"
+    )
+    return [
+        {"role": "system", "content": REFLECT_SYSTEM.format(max_steps=max(0, remaining_budget))},
         {"role": "user", "content": user},
     ]
 
@@ -117,23 +166,65 @@ class Planner:
                 return self._fallback(question, reason=f"规划解析失败（{exc}），退化为直接检索")
             raise
 
+    def reflect(
+        self,
+        question: str,
+        tool_descriptions: list[str],
+        history_text: str,
+        trajectory: list[dict],
+        remaining_budget: int,
+    ) -> Plan:
+        """反思已执行轨迹，判断是否需要补步（S2 ReAct 迭代）。
+
+        返回的 Plan 只承载补步步骤（step_id 从 1 临时编号，由调用方续号）；
+        need_more=false 或没有有效补步时返回空步骤计划。
+        解析失败（坏 JSON 或结构不合法）抛 LLMError，由调用方静默吞掉。
+        """
+        try:
+            messages = build_reflect_prompt(
+                question, tool_descriptions, history_text, trajectory, remaining_budget
+            )
+            obj = self.llm.chat_json(
+                messages,
+                model=self.config.planner_model,
+                temperature=self.config.planner_temperature,
+            )
+            return self._parse_reflection(obj, remaining_budget)
+        except (LLMError, ValueError, TypeError, AttributeError) as exc:
+            raise LLMError(f"反思解析失败（{exc}）") from exc
+
+    def _parse_reflection(self, obj, remaining_budget: int) -> Plan:
+        """解析反思输出：步骤校验复用 _parse 的构建逻辑，结构不合法视为解析失败。"""
+        if not (isinstance(obj, dict) and isinstance(obj.get("steps"), list)):
+            raise ValueError("反思输出缺少 need_more/steps 结构")
+        reasoning = str(obj.get("reasoning", ""))
+        if not obj.get("need_more"):
+            return Plan(reasoning=reasoning, steps=[], plan_summary="反思：无需补步")
+        steps = self._build_steps(obj["steps"], remaining_budget)
+        return Plan(reasoning=reasoning, steps=steps, plan_summary="反思补步")
+
+    def _build_steps(self, raw_steps: list, limit: int) -> list[PlanStep]:
+        """从原始 JSON 步骤列表构建 PlanStep（规划与反思解析共用），超出 limit 截断。"""
+        steps: list[PlanStep] = []
+        for i, s in enumerate(raw_steps[: max(0, limit)]):
+            if not isinstance(s, dict):
+                continue
+            action = str(s.get("action", "")).strip() or "none"
+            inp = s.get("input") if isinstance(s.get("input"), dict) else {}
+            steps.append(
+                PlanStep(
+                    action=action,
+                    input=inp,
+                    purpose=str(s.get("purpose", "")),
+                    step_id=i + 1,
+                )
+            )
+        return steps
+
     def _parse(self, obj, question: str) -> Plan:
         if isinstance(obj, dict) and "steps" in obj:
-            steps: list[PlanStep] = []
             raw_steps = obj["steps"] if isinstance(obj["steps"], list) else []
-            for i, s in enumerate(raw_steps[: self.config.planner_max_steps]):
-                if not isinstance(s, dict):
-                    continue
-                action = str(s.get("action", "")).strip() or "none"
-                inp = s.get("input") if isinstance(s.get("input"), dict) else {}
-                steps.append(
-                    PlanStep(
-                        action=action,
-                        input=inp,
-                        purpose=str(s.get("purpose", "")),
-                        step_id=i + 1,
-                    )
-                )
+            steps = self._build_steps(raw_steps, self.config.planner_max_steps)
             if not steps:
                 return self._fallback(question, reason="计划为空")
             return Plan(

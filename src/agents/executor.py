@@ -8,9 +8,15 @@
 - 其他异常按 tools.max_retries 重试（总尝试次数 = max_retries + 1）；
 - search_knowledge_base 重试耗尽仍失败且启用了 web_search 时，用同一 query 降级
   调 Web 搜索（degraded=True，ok 保持 True）；降级也失败则按普通失败处理。
+
+步骤数据传递（S2 ReAct 迭代）：input 字符串值里的 @step:N / @step:N.field 占位符
+在调用工具前解析为上游步骤输出（text 全文 / 指定字段），上游缺失或失败时置空串
+并记录 warning；只影响实际传给工具的参数，不改动 Plan 本身。同一 Executor 实例
+跨 execute() 调用累积步骤结果（与一次问答生命周期绑定），使反思补步也能引用首轮输出。
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +28,10 @@ from .tools import Tool, ToolContext, ToolValidationError, validate_tool_input
 LOG = get_logger("executor")
 
 _FALLBACK_PREFIX = "[降级] 知识库检索失败，已改用 Web 搜索\n"
+
+# 步骤占位符：@step:N（上游输出全文 text）或 @step:N.field（上游输出 dict 的 field 字段）
+# 字段名限定 ASCII 标识符，避免把中文等后续文本吞进字段名
+_STEP_REF_RE = re.compile(r"@step:(\d+)(?:\.([A-Za-z_][A-Za-z0-9_]*))?")
 
 
 @dataclass
@@ -51,15 +61,19 @@ class Executor:
         self.config = config
         self.tools = tools
         self.ctx = ctx
+        # 跨 execute() 累积的步骤结果（step_id -> StepResult），供后续步骤解析
+        # @step:N 占位符；反思补步续接首轮输出。Executor 与一次问答生命周期绑定。
+        self._history: dict[int, StepResult] = {}
 
     def execute(self, plan: Plan) -> list[StepResult]:
         results: list[StepResult] = []
         for step in plan.steps:
-            result = self._run_step(step.step_id, step)
+            result = self._run_step(step.step_id, step, self._history)
+            self._history[step.step_id] = result
             results.append(result)
         return results
 
-    def _run_step(self, step_id: int, step) -> StepResult:
+    def _run_step(self, step_id: int, step, upstream: dict[int, StepResult] | None = None) -> StepResult:
         result = StepResult(step_id=step_id, action=step.action, input=step.input, purpose=step.purpose)
         tool = self.tools.get(step.action)
         if step.action == "none" or tool is None:
@@ -67,9 +81,14 @@ class Executor:
             return result
         t0 = time.monotonic()
 
+        # 0) 步骤数据传递：解析 input 字符串值里的 @step:N 占位符（不改 Plan 本身）
+        resolved_input, warnings = self._resolve_placeholders(dict(step.input or {}), upstream or {})
+        for warning in warnings:
+            LOG.warning("步骤 %d 占位符置空: %s", step_id, warning)
+
         # 1) 参数校验：不符合 schema 的入参无法靠重试恢复，直接失败
         try:
-            kwargs = validate_tool_input(tool, dict(step.input or {}))
+            kwargs = validate_tool_input(tool, resolved_input)
         except ToolValidationError as exc:
             result.ok = False
             result.error = f"参数校验失败: {exc}"
@@ -116,6 +135,53 @@ class Executor:
         result.output = {"text": f"工具执行失败：{result.error}"}
         result.latency_s = time.monotonic() - t0
         return result
+
+    def _resolve_placeholders(
+        self, step_input: dict, upstream: dict[int, "StepResult"]
+    ) -> tuple[dict, list[str]]:
+        """解析 input 字符串值里的步骤占位符，返回新参数字典与置空警告列表。
+
+        仅替换顶层字符串值中的 @step:N / @step:N.field 子串（str.replace 语义，
+        占位符可作为子串出现在更长文本中）；不修改 Plan 的 step.input。
+        """
+        resolved: dict = {}
+        warnings: list[str] = []
+        for key, value in step_input.items():
+            if isinstance(value, str) and "@step:" in value:
+                resolved[key] = self._replace_step_refs(value, upstream, warnings)
+            else:
+                resolved[key] = value
+        return resolved, warnings
+
+    def _replace_step_refs(
+        self, text: str, upstream: dict[int, "StepResult"], warnings: list[str]
+    ) -> str:
+        """把一段字符串里的 @step:N / @step:N.field 占位符替换为上游步骤输出。
+
+        - @step:N：上游输出 dict 的 text 字段（无 text 时 str(output)）
+        - @step:N.field：上游输出 dict 的 field 字段
+        - 步骤 N 缺失 / 未成功（ok=False）、输出非 dict 或缺 field → 置空串并记录警告
+        """
+
+        def sub(match: re.Match) -> str:
+            n = int(match.group(1))
+            fld = match.group(2)
+            ref = match.group(0)
+            up = upstream.get(n)
+            if up is None or not up.ok:
+                warnings.append(f"{ref} 置空：步骤 {n} 缺失或未成功")
+                return ""
+            out = up.output
+            if fld is None:
+                if isinstance(out, dict):
+                    return str(out["text"]) if "text" in out else str(out)
+                return "" if out is None else str(out)
+            if isinstance(out, dict) and fld in out:
+                return str(out[fld])
+            warnings.append(f"{ref} 置空：步骤 {n} 输出不含字段 {fld}")
+            return ""
+
+        return _STEP_REF_RE.sub(sub, text)
 
     def _try_web_fallback(self, result: StepResult, kb_kwargs: dict, max_retries: int) -> str | None:
         """用同一 query 调 web_search 降级。

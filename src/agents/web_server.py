@@ -114,6 +114,8 @@ class Handler(BaseHTTPRequestHandler):
                     for s in answer.steps
                 ],
                 "fallback": answer.plan.fallback,
+                "rounds": answer.plan.rounds,
+                "reflections": len(answer.plan.reflections),
             },
             "metrics": {
                 "latency_s": round(answer.total_latency_s, 1),
