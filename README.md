@@ -105,20 +105,6 @@ pip install "sentence-transformers>=3.0"
 
 如果未安装 `sentence-transformers`，系统会自动降级为内置的 TF-IDF 哈希向量后端。
 
-### macOS：双击启动
-
-完成安装后，在 Finder 中双击：
-
-```text
-dist/MYAGENTS.app
-```
-
-启动器会关闭当前项目遗留的 MYAGENTS 进程，在 `8787–8797` 中选择空闲端口，等待后端就绪后再打开浏览器。其他项目即使使用相邻端口也不会被结束。
-
-第一次进入页面时会自动打开模型设置。选择 DeepSeek 后只需填写 API Key，地址、模型和生成参数已有默认值。检索设置提供“均衡、快速、深度”三个预设。
-
-关闭所有 MYAGENTS 页面后，本地后端会在约 15 秒内退出。
-
 ### 在页面中配置 API
 
 打开“设置 → 模型”，选择模型服务并填写 API Key。保存后即可提问，密钥不会在设置接口中回传明文。
@@ -294,7 +280,6 @@ python -m benchmark.run_benchmark --retrieval-only \
 ```text
 myAgents/
 ├── config.yaml
-├── dist/MYAGENTS.app/       # macOS 双击启动器
 ├── knowledge_base/          # 本地 Markdown，内容不会提交
 ├── scripts/                 # CLI、索引构建、Web 启动器和前端
 ├── src/agents/
@@ -335,7 +320,7 @@ myAgents/
 
 ### 页面提示 `Failed to fetch`
 
-不要直接打开 `scripts/webui.html`。地址栏以 `file://` 开头时，页面没有连接本地后端。请双击 `dist/MYAGENTS.app`，或使用命令启动 Web 服务后访问 `http://127.0.0.1:端口/`。
+不要直接打开 `scripts/webui.html`。地址栏以 `file://` 开头时，页面没有连接本地后端。请使用命令启动 Web 服务后访问 `http://127.0.0.1:端口/`。
 
 ### 问答正常，但索引显示“后端未连接”
 
@@ -344,16 +329,6 @@ myAgents/
 ### 启动时停在模型下载
 
 精排模型只从本地目录或缓存加载，不会在桌面启动阶段自动下载。模型不存在时会跳过精排，混合检索仍可使用。
-
-### macOS 阻止打开应用
-
-在 Finder 中右键 `MYAGENTS.app`，选择“打开”。应用依赖项目目录中的 `.venv`，移动项目后需要重新确认路径和环境。
-
-启动失败时查看：
-
-```text
-data/desktop-launcher.log
-```
 
 ## 维护
 

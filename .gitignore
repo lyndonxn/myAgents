@@ -21,6 +21,10 @@ knowledge_base/*
 benchmark/results.json
 benchmark/results.md
 
+# Personal macOS desktop launcher (kept locally, never publish)
+dist/
+data/desktop-launcher.log
+
 # Editors and operating systems
 .DS_Store
 .idea/
