@@ -26,3 +26,6 @@ benchmark/results.md
 .idea/
 .vscode/
 *.swp
+
+# ZCode local tool artifacts
+.zcode/
