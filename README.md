@@ -11,7 +11,7 @@
   </a>
 </p>
 
-MYAGENTS 可以把 Markdown 文档目录变成可检索、可连续对话的知识工作区。它使用向量检索和 BM25 查找内容，可选用交叉编码器精排，并在本地保存工作区、会话和反馈。
+MYAGENTS 可以把 Markdown 文档目录变成可检索、可连续对话的知识工作区。它使用向量检索和 BM25 查找内容，可选用交叉编码器精排，并在本地保存工作区、会话、任务和反馈。当前版本已补齐 Agent 的五个核心模块：规划迭代、记忆体系、工具容错、任务状态、输出校验。
 
 项目刻意保持核心轻量：HTTP 服务、会话存储、向量库、BM25 索引、规划器、执行器和模型客户端均未依赖大型应用框架，方便阅读、修改和二次开发。
 
@@ -20,12 +20,16 @@ MYAGENTS 可以把 Markdown 文档目录变成可检索、可连续对话的知�
 - **混合 RAG**：结合向量检索与 BM25，并使用 RRF 完成结果融合。
 - **两阶段检索**：叶子块宽召回、可选精排、父块上下文扩展。
 - **Agent 工作流**：结构化规划、工具执行、回答生成和引用校验。
+- **ReAct 迭代**：步骤输出支持 `@step:N` / `@step:N.field` 传递；失败后可反思并追加计划，受最大步数保护。
 - **持久化会话**：使用 SQLite 保存历史记录，重启后可继续对话。
 - **会话记忆隔离**：不同会话分别恢复上下文，不会相互串线。
 - **多工作区**：切换不同知识库目录及其独立会话列表。
 - **本地 Web UI**：支持流式回答、思考动画、图片问答、语音输入、反馈、复制、设置、指标和日志。
 - **联网降级**：知识库无法回答时，可切换公开网页搜索。
 - **执行可观测**：展示检索轨迹、引用来源、耗时、Token 和成本估算。
+- **长期记忆**：跨会话保存问答经验，向量召回相关历史；支持摘要压缩、容量淘汰和实体事实记忆。
+- **任务状态机**：后台任务逐步落盘，支持暂停、恢复、取消和服务重启后的崩溃恢复。
+- **输出校验**：清除超出来源范围的 `[n]` 引用，并在接口和界面中报告有效/无效数量。
 - **本地优先**：默认仅监听 `127.0.0.1`，密钥和运行数据不会进入 Git。
 
 ## Web 界面
@@ -189,6 +193,33 @@ python -m scripts.ask --question "解释完整检索流程" --verbose
 - `/reset`：清空当前记忆；
 - `exit`：退出交互模式。
 
+### 后台任务（CLI）
+
+长任务可独立于聊天窗口运行，并与 Web 端共享 `data/tasks/`：
+
+```bash
+python -m scripts.task --question "总结知识库中的 RAG 流程"
+python -m scripts.task --list
+python -m scripts.task --watch <task_id>
+python -m scripts.task --resume <task_id>
+python -m scripts.task --cancel <task_id>
+```
+
+任务状态为 `queued`、`running`、`paused`、`completed`、`failed` 或 `canceled`。每个步骤完成即写入 JSON；进程异常退出后，遗留任务会在下次启动时转为 `paused`，不会重复执行已完成步骤。
+
+### HTTP API 摘要
+
+除 `/api/ask` 和 `/api/ask_stream` 外，后端提供后台任务接口：
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/api/tasks` | 创建任务（`question`，可选 `session_id`） |
+| `GET` | `/api/tasks` | 按更新时间倒序列出任务 |
+| `GET` | `/api/tasks/{id}` | 查看计划、步骤、答案和用量 |
+| `POST` | `/api/tasks/{id}/pause\|resume\|cancel` | 控制任务状态 |
+
+任务完成后会写回对应会话；暂停、失败和取消不会写入聊天消息。
+
 ## 检索流程
 
 | 阶段 | 实现方式 |
@@ -238,6 +269,24 @@ python -m benchmark.run_benchmark
 python -m benchmark.run_benchmark --retrieval-only
 ```
 
+### 使用公开样例库
+
+仓库提供 `samples/kb/`（5 篇原创技术短文）与 `benchmark/questions_sample.json`（10 题），可在不污染用户索引的情况下验证检索：
+
+```bash
+python -m benchmark.run_benchmark --retrieval-only \
+  --kb samples/kb --questions benchmark/questions_sample.json
+```
+
+评测会记录关键词命中、文件/章节命中、任务完成率、引用幻觉率、延迟、成本和退化率；`--judge` 需要显式启用并会调用模型。私人知识库只能通过 `--kb` 临时评测，不应把其标题、关键词或题目提交到样例库。
+
+## 当前边界
+
+- 系统默认本地监听，但 Web 搜索和模型回答仍会把相关问题发送到配置的外部服务；需要离线运行时关闭 `tools.web_search_enabled` 并使用本地模型或仅运行检索评测。
+- 长期记忆和实体记忆默认开启，数据写入 `data/`；共享设备或敏感资料场景应关闭对应开关并清理既有数据。
+- 任务暂停发生在步骤边界或合成阶段检查点，不保证中断正在进行的单次模型请求；超时/模型错误会进入 `failed`，应查看任务详情后重试。
+- 引用校验只判断 `[n]` 是否落在实际来源编号范围内，不证明内容真的支持该陈述；`citation_hallucination` 是格式/编号指标，不是事实正确率。
+
 生成的 `benchmark/results.json` 和 `benchmark/results.md` 不会提交到 Git。
 
 ## 项目结构
@@ -259,11 +308,16 @@ myAgents/
 │   ├── embeddings.py        # 本地与 TF-IDF 向量后端
 │   ├── reranker.py          # Cross-Encoder / LLM 精排
 │   ├── memory.py            # 进程内会话记忆
+│   ├── long_memory.py       # 跨会话长期记忆与实体记忆
+│   ├── citations.py         # [n] 引用提取与合法性校验
+│   ├── task_store.py        # 任务 JSON 持久化
+│   ├── task_runner.py       # 后台任务执行、暂停/恢复/取消
 │   ├── web_store.py         # SQLite 持久化
 │   ├── web_server.py        # 本地 HTTP API
 │   ├── web_search.py        # 公开网页搜索降级
 │   └── llm.py               # OpenAI 兼容模型客户端
-├── benchmark/
+├── benchmark/               # 检索/问答评测与指标汇总
+├── samples/kb/              # 5 篇原创公开样例文档
 └── tests/
 ```
 
