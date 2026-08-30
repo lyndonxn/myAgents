@@ -599,6 +599,14 @@ body{
 .kb-head .task-flag{color:var(--blue);background:var(--blue-soft);border:1px solid var(--blue-line);}
 .cite-warn{margin-top:12px;font-size:12px;line-height:1.6;color:var(--red);border:1px solid var(--red);border-radius:6px;padding:8px 12px;}
 .cite-ok{margin-top:12px;font-family:var(--mono);font-size:9.5px;letter-spacing:0.08em;color:var(--mute);}
+/* 参考来源折叠（用户反馈）：默认收起，点击展开 */
+.ref-fold{margin-top:8px;border-top:1px dashed var(--line);padding-top:4px;}
+.ref-fold summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:0.08em;color:var(--mute);user-select:none;}
+.ref-fold summary::-webkit-details-marker{display:none;}
+.ref-fold summary:hover{color:var(--blue);}
+.ref-fold .rf-caret{display:inline-block;font-size:8px;transition:transform .15s;}
+.ref-fold[open] .rf-caret{transform:rotate(90deg);}
+.ref-fold[open] summary{margin-bottom:2px;}
 .task-item{border-bottom:1px solid var(--line);}
 .task-item:last-child{border-bottom:none;}
 .task-row{display:flex;align-items:center;gap:8px;padding:9px 0;cursor:pointer;}
@@ -972,11 +980,31 @@ function nowTime(){
 function esc(value){
   return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-function renderMd(text){
+function _mdHtml(text){
   return esc(text).replace(/```([\s\S]*?)```/g,'<pre><code>$1</code></pre>')
     .replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
     .replace(/^### (.+)$/gm,'<h3>$1</h3>').replace(/^## (.+)$/gm,'<h2>$1</h2>')
     .replace(/^# (.+)$/gm,'<h1>$1</h1>').replace(/^- (.+)$/gm,'<div>• $1</div>').replace(/\n/g,'<br>');
+}
+/* 参考来源折叠状态（按消息记忆，避免流式重渲染时被重置） */
+const REF_FOLD_OPEN={};
+function refFoldSync(key,open){REF_FOLD_OPEN[key]=open;}
+function renderMd(text,foldKey){
+  const raw=String(text||'');
+  // 末尾「参考来源」清单默认折叠：定位最后一个 参考来源 标题行（兼容加粗/中英冒号/标题号）
+  const re=/(?:^|\n)[ \t]*#{0,4}[ \t]*\*{0,2}参考来源[:：]?\*{0,2}[ \t]*(?=\n|$)/g;
+  let last=-1,m2;
+  while((m2=re.exec(raw)))last=m2.index;
+  if(last>=0&&foldKey!==undefined){
+    const main=raw.slice(0,last),tail=raw.slice(last);
+    if(main.trim()&&tail.trim()){
+      const count=(tail.match(/^\s*\[\d+\]/gm)||[]).length;
+      const open=REF_FOLD_OPEN[foldKey]?' open':'';
+      const key=String(foldKey).replace(/'/g,'');
+      return _mdHtml(main)+`<details class="ref-fold"${open}><summary ontoggle="refFoldSync('${key}',this.open)">参考来源${count?`（${count} 条）`:''}<span class="rf-caret">▶</span></summary><div class="rf-body">${_mdHtml(tail)}</div></details>`;
+    }
+  }
+  return _mdHtml(raw);
 }
 function sourceRows(sources){
   return (sources||[]).map((s,i)=>({name:String(s),ref:`来源 ${String(i+1).padStart(2,'0')}`,pct:Math.max(68,92-i*7)}));
@@ -990,7 +1018,7 @@ function liveAnswerHTML(m){
   const citeInvalid=Number(metrics.citations_invalid||0),citeValid=Number(metrics.citations_valid||0);
   const citeLine=citeInvalid>0?`<div class="block cite-warn">引用校验：剔除 ${citeInvalid} 个无效引用</div>`:(citeValid>0?`<div class="block cite-ok">引用校验 通过</div>`:'');
   const foot=sources.length?`<div class="block src-foot"><div class="src-chips">${sources.map((s,i)=>`<span class="src-chip"><span class="sc-n">0${i+1}</span><span>${esc(s.name)}</span></span>`).join('')}</div></div>`:'';
-  return bar+head+citeLine+`<div class="block lead">${renderMd(m.answer||'')}</div>`+planHtml+foot;
+  return bar+head+citeLine+`<div class="block lead">${renderMd(m.answer||'',m.messageId?'id:'+m.messageId:'stream')}</div>`+planHtml+foot;
 }
 function answerCardHTML(key){
   const a = ANSWERS[key];
