@@ -471,8 +471,8 @@ body{
 /* sources */
 .src-item{padding:10px 0;border-bottom:1px solid var(--line);}
 .src-item:last-child{border-bottom:none;}
-.src-item .sr-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
-.src-item .sr-name{font-size:12.5px;font-weight:600;}
+.src-item .sr-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;min-width:0;}
+.src-item .sr-name{font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-all;}
 .src-item .sr-ref{font-family:var(--mono);font-size:8.5px;color:var(--mute);margin-top:3px;letter-spacing:0.05em;}
 .src-item .sr-pct{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--blue);}
 .rel-track{height:4px;background:var(--bg);border-radius:2px;margin-top:8px;position:relative;overflow:hidden;}

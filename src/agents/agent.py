@@ -50,6 +50,9 @@ SYNTHESIS_SYSTEM = """你是知识库问答助手。基于检索到的片段回�
 2. 用中文回答，条理清晰。
 3. 引用来源：正文中用 [n] 标注依据（n 对应片段编号），回答末尾列出"参考来源"清单。
 4. 如果规划中包含了工具执行结果（检索片段/计算结果），请充分利用。
+5. 如果没有提供任何检索片段、或片段与问题明显无关：回答开头明确写「未在知识库内找到相关内容」，
+   随后询问用户"需要我联网搜索吗？回复「联网搜索」即可"。未经用户同意不要使用网络内容作答，
+   也不要把无关片段硬凑成答案。
 """
 
 
@@ -355,7 +358,15 @@ class Agent:
             self._reflect_and_extend(answer, planner, executor, question, history_text, verbose=verbose)
 
             # 3. 生成（结合对话历史，保持连贯；全部步骤结束后统一合成一次）
-            answer.final_answer = self._synthesize(question, answer.plan, answer.steps, history_text)
+            # 知识库零命中且未联网（用户未同意）→ 追加确定性提示：答「未在知识库内」并询问是否联网
+            kb_miss = self._kb_miss(answer.steps)
+            miss_hint = (
+                "\n\n（系统提示：本次知识库检索未命中任何相关片段，且用户尚未同意联网搜索。"
+                "请按系统规则回答：开头明确「未在知识库内找到相关内容」，"
+                "并询问用户是否需要联网搜索——回复「联网搜索」即可。不要编造、不要硬凑答案。）"
+                if kb_miss else ""
+            )
+            answer.final_answer = self._synthesize(question, answer.plan, answer.steps, history_text, extra_hint=miss_hint)
             answer.llm_calls += 1
             answer.sources = self._collect_sources(answer.steps)
             # 3.5 引用校验（S3）：sources 在 ask 层收集，故在此按实际来源数校验
@@ -569,7 +580,9 @@ class Agent:
                 for step in answer.steps[base:]:
                     print(f"  · {step.display()}")
 
-    def _synthesize(self, question: str, plan: Plan, steps: list[StepResult], history_text: str = "") -> str:
+    def _synthesize(
+        self, question: str, plan: Plan, steps: list[StepResult], history_text: str = "", extra_hint: str = ""
+    ) -> str:
         # 组装各成功步骤的输出作为生成上下文；来源编号即 sources 收集顺序，
         # 正文 [n] 引用的合法性由 ask 层按 len(sources) 校验（S3）。
         context_parts: list[str] = []
@@ -590,6 +603,7 @@ class Agent:
             + "\n\n".join(context_parts)
             + "\n\n请基于以上信息回答，正文标注 [n] 引用，并在末尾列出参考来源。"
             "如问题是对之前话题的追问或对比，请结合对话历史保持回答连贯。"
+            + extra_hint
         )
         result = self.llm.chat(
             [
@@ -599,6 +613,19 @@ class Agent:
         )
         self._accumulate_usage(result)
         return result.text
+
+    @staticmethod
+    def _kb_miss(steps: list[StepResult]) -> bool:
+        """知识库未命中判定（供「未在知识库内 + 询问是否联网」行为）：
+        没有 hit_count>0 的成功 KB 检索步骤，也没有成功的 web_search 步骤
+        （用户已同意联网时不提示，按联网结果作答）。"""
+        kb_hit = any(
+            s.ok and s.action == "search_knowledge_base"
+            and isinstance(s.output, dict) and s.output.get("hit_count")
+            for s in steps
+        )
+        web_used = any(s.ok and s.action == "web_search" for s in steps)
+        return not kb_hit and not web_used
 
     def _collect_sources(self, steps: list[StepResult]) -> list[str]:
         seen: list[str] = []
