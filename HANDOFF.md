@@ -58,15 +58,19 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 | 切片 | 内容 | 验收 | 提交 |
 | --- | --- | --- | --- |
 | G1 | 测试入口标准化（P0-1）：10 个 plain-script 套件 → unittest 可发现，76 用例；直跑兼容保留；统一入口写入 AGENTS.md | 独立验收 ACCEPTED（ACC-P0-1-a..f 全过） | bcb8121(spec) + cfee0d7(tests+AGENTS) |
+| G2 | 配置校验（P0-4）：validate_config/ConfigError/normalize_config 落地规则表；load_config 失败抛错不静默启动；POST /api/config 无效值 400（errors 列表，不回显 Key）；归一化布尔字符串与枚举 | 独立验收 ACCEPTED（ACC-P0-4-a..f 全过，含用户 runtime.json 逐字节不变取证） | 85957d5（含 spec 规则表） |
 
 验证证据：`unittest discover` 76/76 OK（改造前 0）；直跑 10/10 退出码 0；失败路径非 0（/tmp 验证）；离线（fake LLM/桩，data/ 用户库零写入）；六类覆盖映射完整。
 
 ## 观察项（预存行为，非本切片缺陷，待后续切片决定）
 1. `tests/test_smoke.py::test_load_chunks` 在 cfg.kb_path 指向真实知识库时会只读访问（有存在性守卫、旧行为原样保留）；如需完全隔离可改 fixture 库。
 2. `tests/test_benchmark_sample.py` 依赖本机已缓存的 bge-small-zh-v1.5；冷缓存环境可能触发下载。
+3. （G2 验收发现）`/api/config` 保存路径 `llm.api_key` 沿用既有 `str()` 转换，int 型 Key 被转字符串落盘而 `vision.api_key` 会 400——统一口径放到 G5 密钥安全切片。
+4. （G2 验收发现）CONFIG_FIELDS 白名单外键在保存路径被静默丢弃，属既有行为。
 
 ## 延期决策
 - G1 覆盖率指标（≥80%）延期：需 coverage.py，超出轻依赖授权，待用户授权。
+- G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-G2 配置校验（P0-4）：`config.py` 启动/保存双拦截 + `/api/config` 400 契约，验收标准见 `spec/p0-p1-improvement.md` P0-4。push 状态：未 push（未授权）。
+G3 数据外发默认关闭 + 回答状态披露（P0-3 + ACC-U3-01..03）：三开关默认 false、`allow_web`/`remember` 字段、runtime.json 迁移策略、degraded/外发标记透出 payload 与答案卡片；与 G4 记忆治理共用设置页改动面。push 状态：未 push（未授权）。
