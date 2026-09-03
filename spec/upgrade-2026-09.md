@@ -24,6 +24,17 @@
 
 ## 2. 新增验收（既有 P0/P1 验收 ID 继续有效，此处只定义新目标）
 
+### G2 补充：校验规则表（P0-4 的可执行细化）
+
+只校验显式提供的值，缺失键用默认值不算错误；收集全部错误（不 fail-fast）；每条消息含完整 dotted 路径 + 中文修复建议；路径含 key/token/secret 的绝不回显值。
+
+- **整数**（bool 不算 int，范围闭区间）：`retrieval.top_k` 1–100；`retrieval.rerank_candidates` 1–200；`planner.max_steps` 1–50；`planner.max_reflections` 0–10；`tools.max_retries` 0–5；`tools.search_default_top_k` 1–50；`llm.max_retries` 0–10；`llm.json_repair_rounds` 0–5；`llm.max_tokens` 64–32768；`llm.timeout` >0；`memory.max_episodes` 1–100000；`embedding.hash_dim` 64–65536；`chunking.min_chars` 0–100000。
+- **浮点**（int 或 float 均可）：`llm.temperature`、`planner.temperature` 0–2；`retrieval.vector_weight`、`retrieval.keyword_weight`、`retrieval.rerank_blend` 0–1；`tools.web_search.timeout` >0；`tools.web_search.cache_ttl` ≥0。跨字段：`chunking.max_chars` 必须大于 `chunking.min_chars`。
+- **枚举**（大小写不敏感）：`retrieval.rerank` ∈ off/auto/cross_encoder/llm（bool true/false 向后兼容）；`retrieval.fusion_mode` ∈ rrf/weighted；`embedding.backend`、`memory.embedding_backend` ∈ auto/local/tfidf。
+- **布尔**：接受 bool 或字符串 true/false/1/0/yes/no（大小写不敏感，加载时归一化为真 bool）；键集为全部 *_enabled、contextual_augment、multi_query、fallback_direct、reflect、kb_fallback_web。
+- **字符串/格式**：`kb_path`、`data_dir` 非空且无 NUL；`llm.base_url`、`vision.base_url`（非空时）须 http(s):// 开头；`llm.chat_model`、`planner.model`、`embedding.model`、`retrieval.reranker_model` 非空且无空白；`vision.model` 非空时无空白；`llm.api_key`、`vision.api_key` 只查类型为 str。
+- **接口**：`validate_config(raw) -> list[str]`（空=通过）；`ConfigError(RuntimeError)` 携带 `.errors`；`load_config()` 校验失败抛 ConfigError（进程不静默启动）；POST `/api/config` 对合并后配置校验，失败返回 400（响应含 errors 列表，不回显 Key）。测试经 monkeypatch RUNTIME_PATH/CONFIG_PATH 到临时目录，绝不读写用户 data/runtime.json 与 .env。
+
 ### G3 挂载项：回答状态披露（并入 G3 切片交付）
 
 - **ACC-U3-01** Given 某步 KB 检索降级走 Web（`StepResult.degraded=True`），When `/api/ask` 响应，Then `metrics.degraded==true` 且旧字段不变。

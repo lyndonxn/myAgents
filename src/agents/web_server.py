@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import threading
 import time
@@ -21,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from agents.agent import Agent
-from agents.config import PROJECT_ROOT, load_config, save_runtime
+from agents.config import PROJECT_ROOT, load_config, normalize_config, save_runtime, validate_config
 from agents.llm import LLMClient, LLMError
 from agents.logger import get_logger, setup_logging
 from agents.task_runner import TaskRunner
@@ -652,32 +653,8 @@ class Handler(BaseHTTPRequestHandler):
             if payload is None:
                 self._send_json({"error": "请求格式错误"}, 400)
                 return
-            overrides: dict = {}
-            for section, fields in CONFIG_FIELDS.items():
-                if section not in payload:
-                    continue
-                section_dict = overrides.setdefault(section, {})
-                for key, value in payload[section].items():
-                    if key not in fields:
-                        continue
-                    if isinstance(value, str) and not value.strip():
-                        continue
-                    section_dict[key] = value
-            key = str(payload.get("llm", {}).get("api_key", "")).strip()
-            if key and "****" not in key:
-                overrides.setdefault("llm", {})["api_key"] = key
-            if overrides:
-                try:
-                    with self.lock:
-                        save_runtime(overrides)
-                        _deep_update(self.agent.config._raw, overrides)
-                        self.agent.reconfigure()
-                except Exception as exc:  # noqa: BLE001
-                    LOG.warning("配置保存失败: %s", exc)
-                    self._send_json({"error": f"配置保存失败: {exc}"}, 400)
-                    return
-            LOG.info("配置已更新: %s", {s: list(v.keys()) for s, v in overrides.items()})
-            self._send_json({"ok": True, "config": self._config_view()})
+            status, body = self._save_config(payload)
+            self._send_json(body, status)
             return
 
         if self.path == "/api/kb":
@@ -725,6 +702,48 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send_json({"error": "未知接口"}, 404)
+
+    def _save_config(self, payload: dict) -> tuple[int, dict]:
+        """POST /api/config 处理体（G2 配置校验）。
+
+        构建 overrides 后，把当前生效配置与 overrides 深合并出「拟生效配置」先行
+        validate_config，失败返回 (400, {"error", "errors"}) 且不落盘、不热更新；
+        通过则归一化 overrides（布尔字符串/枚举小写，落盘与内存口径一致）后
+        save_runtime + _deep_update + reconfigure，返回 (200, {"ok", "config"})，
+        既有成功响应结构不变。错误消息含完整 dotted 路径且绝不回显 Key 值。
+        """
+        overrides: dict = {}
+        for section, fields in CONFIG_FIELDS.items():
+            if section not in payload:
+                continue
+            section_dict = overrides.setdefault(section, {})
+            for key, value in payload[section].items():
+                if key not in fields:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                section_dict[key] = value
+        key = str(payload.get("llm", {}).get("api_key", "")).strip()
+        if key and "****" not in key:
+            overrides.setdefault("llm", {})["api_key"] = key
+        if overrides:
+            proposed = copy.deepcopy(self.agent.config._raw)
+            _deep_update(proposed, overrides)
+            errors = validate_config(proposed)
+            if errors:
+                LOG.warning("配置校验失败: %d 处错误，拒绝保存", len(errors))
+                return 400, {"error": "配置校验失败", "errors": errors}
+            normalize_config(overrides)
+            try:
+                with self.lock:
+                    save_runtime(overrides)
+                    _deep_update(self.agent.config._raw, overrides)
+                    self.agent.reconfigure()
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("配置保存失败: %s", exc)
+                return 400, {"error": f"配置保存失败: {exc}"}
+        LOG.info("配置已更新: %s", {s: list(v.keys()) for s, v in overrides.items()})
+        return 200, {"ok": True, "config": self._config_view()}
 
     def _config_view(self) -> dict:
         cfg = self.agent.config

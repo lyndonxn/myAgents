@@ -18,8 +18,13 @@ ENV_PATH = PROJECT_ROOT / ".env"
 RUNTIME_PATH = PROJECT_ROOT / "data" / "runtime.json"
 
 
-def _load_dotenv(path: Path = ENV_PATH) -> None:
-    """极简 .env 加载：KEY=VALUE 每行，忽略注释与空行，不覆盖已有环境变量。"""
+def _load_dotenv(path: Path | None = None) -> None:
+    """极简 .env 加载：KEY=VALUE 每行，忽略注释与空行，不覆盖已有环境变量。
+
+    path 缺省时取模块级 ENV_PATH（调用时解析而非定义时绑定，便于测试替换到临时目录）。
+    """
+    if path is None:
+        path = ENV_PATH
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -64,6 +69,289 @@ def save_runtime(overrides: dict) -> None:
     _deep_merge(current, overrides)
     RUNTIME_PATH.parent.mkdir(parents=True, exist_ok=True)
     RUNTIME_PATH.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ================= G2 配置校验（P0-4 + spec/upgrade-2026-09「校验规则表」） =================
+#
+# 约定：只校验显式提供的值（缺失键用默认值，不算错误）；收集全部错误不 fail-fast；
+# 每条消息含完整 dotted 路径与中文期望；路径含 key/token/secret 语义的键绝不回显
+# 实际值（只回显类型）。
+
+
+class ConfigError(RuntimeError):
+    """配置校验失败异常。errors 为全部错误消息列表，异常消息按行拼接。"""
+
+    def __init__(self, errors: list[str]):
+        self.errors = list(errors)
+        super().__init__("\n".join(self.errors))
+
+
+# 整数规则（bool 不算 int，闭区间）：dotted 路径 → (最小值, 最大值)。
+# 注：chunking.max_chars 在规则表中只出现于跨字段条目，此处按 min_chars 同口径补上
+# 类型/范围校验（解释性决定），否则跨字段比较对非整数值无从下手。
+_INTEGER_RANGES: dict[str, tuple[int, int]] = {
+    "retrieval.top_k": (1, 100),
+    "retrieval.rerank_candidates": (1, 200),
+    "planner.max_steps": (1, 50),
+    "planner.max_reflections": (0, 10),
+    "tools.max_retries": (0, 5),
+    "tools.search_default_top_k": (1, 50),
+    "llm.max_retries": (0, 10),
+    "llm.json_repair_rounds": (0, 5),
+    "llm.max_tokens": (64, 32768),
+    "memory.max_episodes": (1, 100000),
+    "embedding.hash_dim": (64, 65536),
+    "chunking.min_chars": (0, 100000),
+    "chunking.max_chars": (0, 100000),
+}
+_POSITIVE_INT_KEYS: tuple[str, ...] = ("llm.timeout",)  # 整数且 >0
+# 浮点规则（int 或 float 均可，bool 不算，闭区间）
+_FLOAT_RANGES: dict[str, tuple[float, float]] = {
+    "llm.temperature": (0.0, 2.0),
+    "planner.temperature": (0.0, 2.0),
+    "retrieval.vector_weight": (0.0, 1.0),
+    "retrieval.keyword_weight": (0.0, 1.0),
+    "retrieval.rerank_blend": (0.0, 1.0),
+}
+_POSITIVE_FLOAT_KEYS: tuple[str, ...] = ("tools.web_search.timeout",)  # 数值且 >0
+_NONNEGATIVE_FLOAT_KEYS: tuple[str, ...] = ("tools.web_search.cache_ttl",)  # 数值且 ≥0
+# 枚举规则（大小写不敏感）；retrieval.rerank 另接受 bool true/false（旧配置向后兼容）
+_ENUM_CHOICES: dict[str, tuple[str, ...]] = {
+    "retrieval.rerank": ("off", "auto", "cross_encoder", "llm"),
+    "retrieval.fusion_mode": ("rrf", "weighted"),
+    "embedding.backend": ("auto", "local", "tfidf"),
+    "memory.embedding_backend": ("auto", "local", "tfidf"),
+}
+_BOOL_STR_TRUE = frozenset({"true", "1", "yes"})
+_BOOL_STR_FALSE = frozenset({"false", "0", "no"})
+# 布尔键集：全部 *_enabled + contextual_augment / multi_query / fallback_direct / reflect / kb_fallback_web
+_BOOL_KEYS: frozenset[str] = frozenset({
+    "chunking.contextual_augment",
+    "retrieval.multi_query",
+    "planner.fallback_direct",
+    "planner.reflect",
+    "tools.kb_fallback_web",
+    "tools.calculator_enabled",
+    "tools.time_enabled",
+    "tools.topics_enabled",
+    "tools.web_search_enabled",
+    "memory.long_term_enabled",
+    "memory.entities_enabled",
+})
+_NONEMPTY_NO_NUL_KEYS: tuple[str, ...] = ("kb_path", "data_dir")  # 非空且无 NUL
+_URL_KEYS: tuple[str, ...] = ("llm.base_url", "vision.base_url")  # 非空时须 http(s):// 开头
+_NONEMPTY_NO_WS_KEYS: tuple[str, ...] = (  # 非空且无空白
+    "llm.chat_model",
+    "planner.model",
+    "embedding.model",
+    "retrieval.reranker_model",
+)
+_NO_WS_IF_NONEMPTY_KEYS: tuple[str, ...] = ("vision.model",)  # 非空时无空白（允许空）
+_TYPE_ONLY_STR_KEYS: tuple[str, ...] = ("llm.api_key", "vision.api_key")  # 只查类型为 str
+
+_MISSING = object()  # _get_path 的「键不存在」哨兵（区别于值恰好为 None）
+
+
+def _get_path(raw: dict, dotted: str) -> Any:
+    """按 dotted 路径取值；任一层缺失或不是 dict 时返回哨兵 _MISSING。"""
+    node: Any = raw
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return _MISSING
+        node = node[part]
+    return node
+
+
+def _set_path(raw: dict, dotted: str, value: Any) -> None:
+    """按 dotted 路径就地覆写已存在的键；任一层缺失或不是 dict 时静默跳过。"""
+    parts = dotted.split(".")
+    node: Any = raw
+    for part in parts[:-1]:
+        node = node.get(part) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            return
+    if isinstance(node, dict) and parts[-1] in node:
+        node[parts[-1]] = value
+
+
+def _is_sensitive(dotted: str) -> bool:
+    """键路径是否敏感（key/token/secret 语义）。
+
+    按片段全等或后缀判断（如 api_key），而非子串——避免 keyword_weight 因含
+    "key" 子串被误判为敏感。
+    """
+    return any(
+        segment in ("key", "token", "secret") or segment.endswith(("_key", "_token", "_secret"))
+        for segment in dotted.lower().split(".")
+    )
+
+
+def _render_actual(dotted: str, value: Any) -> str:
+    """渲染错误消息中的「实际值」片段。敏感键只回显类型，绝不回显实际值。"""
+    if _is_sensitive(dotted):
+        return f"实际类型: {type(value).__name__}"
+    if isinstance(value, str):
+        if "\x00" in value:
+            return "实际含 NUL 字符"
+        shown = value if len(value) <= 60 else value[:57] + "…"
+        return f"实际: {shown!r}"
+    if isinstance(value, (int, float)):
+        return f"实际: {value!r}"
+    return f"实际类型: {type(value).__name__}"
+
+
+def _is_number(value: Any) -> bool:
+    """数值判定：int/float 均可，bool 不算（bool 是 int 子类，需显式排除）。"""
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
+def validate_config(raw: dict) -> list[str]:
+    """按 G2 规则表校验显式提供的配置值，返回全部错误消息（空列表 = 通过）。
+
+    - 缺失键不算错误（使用默认值）；
+    - 收集全部错误，不 fail-fast；
+    - 每条消息含完整 dotted 路径与中文期望（修复建议）；
+    - 敏感键（api_key 等）绝不回显实际值，只回显类型。
+    """
+    errors: list[str] = []
+
+    def add(dotted: str, expect: str, value: Any, type_only: bool = False) -> None:
+        # 类型错误只报类型（对齐规格示例）；取值错误回显实际值（敏感键由 _render_actual 兜底只报类型）
+        actual = f"实际类型: {type(value).__name__}" if type_only else _render_actual(dotted, value)
+        errors.append(f"{dotted}: {expect}（{actual}）")
+
+    # ---- 整数（bool 不算 int，闭区间）----
+    for dotted, (lo, hi) in _INTEGER_RANGES.items():
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool):
+            add(dotted, f"应为 {lo}–{hi} 的整数", value, type_only=True)
+        elif not lo <= value <= hi:
+            add(dotted, f"应为 {lo}–{hi} 的整数", value)
+    # ---- 正整数（整数且 >0）----
+    for dotted in _POSITIVE_INT_KEYS:
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool):
+            add(dotted, "应为大于 0 的整数", value, type_only=True)
+        elif value <= 0:
+            add(dotted, "应为大于 0 的整数", value)
+    # ---- 浮点（int 或 float 均可，闭区间）----
+    for dotted, (lo, hi) in _FLOAT_RANGES.items():
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if not _is_number(value):
+            add(dotted, f"应为 {lo:g}–{hi:g} 的数值", value, type_only=True)
+        elif not lo <= value <= hi:
+            add(dotted, f"应为 {lo:g}–{hi:g} 的数值", value)
+    # ---- 正浮点（数值且 >0）/ 非负浮点（数值且 ≥0）----
+    for dotted in _POSITIVE_FLOAT_KEYS:
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if not _is_number(value):
+            add(dotted, "应为大于 0 的数值", value, type_only=True)
+        elif value <= 0:
+            add(dotted, "应为大于 0 的数值", value)
+    for dotted in _NONNEGATIVE_FLOAT_KEYS:
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if not _is_number(value):
+            add(dotted, "应为不小于 0 的数值", value, type_only=True)
+        elif value < 0:
+            add(dotted, "应为不小于 0 的数值", value)
+    # ---- 枚举（大小写不敏感；retrieval.rerank 的 bool true/false 向后兼容）----
+    for dotted, choices in _ENUM_CHOICES.items():
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if dotted == "retrieval.rerank" and isinstance(value, bool):
+            continue
+        if not isinstance(value, str):
+            add(dotted, f"应为 {'/'.join(choices)} 之一", value, type_only=True)
+        elif value.lower() not in choices:
+            add(dotted, f"应为 {'/'.join(choices)} 之一", value)
+    # ---- 布尔（bool 或字符串 true/false/1/0/yes/no，大小写不敏感）----
+    for dotted in sorted(_BOOL_KEYS):
+        value = _get_path(raw, dotted)
+        if value is _MISSING or isinstance(value, bool):
+            continue
+        if not isinstance(value, str):
+            add(dotted, "应为布尔值 true/false/1/0/yes/no", value, type_only=True)
+        elif value.strip().lower() not in _BOOL_STR_TRUE | _BOOL_STR_FALSE:
+            add(dotted, "应为布尔值 true/false/1/0/yes/no", value)
+    # ---- 字符串/格式 ----
+    for dotted in _NONEMPTY_NO_NUL_KEYS:
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if not isinstance(value, str):
+            add(dotted, "应为非空且不含 NUL 字符的字符串", value, type_only=True)
+        elif not value or "\x00" in value:
+            add(dotted, "应为非空且不含 NUL 字符的字符串", value)
+    for dotted in _URL_KEYS:
+        value = _get_path(raw, dotted)
+        if value is _MISSING or (isinstance(value, str) and not value):
+            continue  # 空串表示走环境变量/默认值，放行
+        if not isinstance(value, str):
+            add(dotted, "应为以 http:// 或 https:// 开头的字符串", value, type_only=True)
+        elif not value.startswith(("http://", "https://")):
+            add(dotted, "应为以 http:// 或 https:// 开头的字符串", value)
+    for dotted in _NONEMPTY_NO_WS_KEYS:
+        value = _get_path(raw, dotted)
+        if value is _MISSING:
+            continue
+        if not isinstance(value, str):
+            add(dotted, "应为非空且不含空白字符的字符串", value, type_only=True)
+        elif not value.strip() or any(ch.isspace() for ch in value):
+            add(dotted, "应为非空且不含空白字符的字符串", value)
+    for dotted in _NO_WS_IF_NONEMPTY_KEYS:
+        value = _get_path(raw, dotted)
+        if value is _MISSING or (isinstance(value, str) and not value):
+            continue  # 允许为空（视觉模型未配置）
+        if not isinstance(value, str):
+            add(dotted, "应为不含空白字符的字符串", value, type_only=True)
+        elif any(ch.isspace() for ch in value):
+            add(dotted, "应为不含空白字符的字符串", value)
+    for dotted in _TYPE_ONLY_STR_KEYS:
+        value = _get_path(raw, dotted)
+        if value is not _MISSING and not isinstance(value, str):
+            add(dotted, "应为字符串", value, type_only=True)  # 只查类型，不查内容
+    # ---- 跨字段：chunking.max_chars 必须大于 chunking.min_chars（两侧均显式提供才比较）----
+    max_chars = _get_path(raw, "chunking.max_chars")
+    min_chars = _get_path(raw, "chunking.min_chars")
+    if _is_number(max_chars) and _is_number(min_chars) and max_chars <= min_chars:
+        errors.append(
+            "chunking.max_chars: 必须大于 chunking.min_chars"
+            f"（实际: max_chars={max_chars}, min_chars={min_chars}）"
+        )
+    return errors
+
+
+def normalize_config(raw: dict) -> dict:
+    """就地归一化规则表中的布尔字符串键与枚举键，返回 raw 本身。
+
+    仅处理规则表列出的键，应在 validate_config 通过后调用（假定值已合法）：
+    - 布尔键："true"/"1"/"yes"（大小写不敏感）→ True，"false"/"0"/"no" → False；
+    - 枚举键：字符串归一化小写（retrieval.rerank 的 bool 值保持不变）。
+    """
+    for dotted in _BOOL_KEYS:
+        value = _get_path(raw, dotted)
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in _BOOL_STR_TRUE:
+                _set_path(raw, dotted, True)
+            elif lowered in _BOOL_STR_FALSE:
+                _set_path(raw, dotted, False)
+    for dotted in _ENUM_CHOICES:
+        value = _get_path(raw, dotted)
+        if isinstance(value, str):
+            _set_path(raw, dotted, value.strip().lower())
+    return raw
 
 
 class Config:
@@ -321,4 +609,10 @@ def load_config() -> Config:
     # 环境变量覆盖
     if os.environ.get("DEEPSEEK_API_KEY"):
         raw.setdefault("llm", {})["api_key_env"] = "DEEPSEEK_API_KEY"
+    # G2：返回前对合并后的 raw 做校验，失败抛 ConfigError（进程不静默启动）
+    errors = validate_config(raw)
+    if errors:
+        raise ConfigError(errors)
+    # 校验通过后归一化布尔字符串与枚举大小写（仅规则表列出的键）
+    normalize_config(raw)
     return Config(raw)
