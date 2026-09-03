@@ -1,7 +1,7 @@
 # AGENTS.md — myAgents 工程契约
 
 ## 项目目的
-本地优先的 Markdown 知识库问答 Agent（Python，无重框架）。本次根任务：按"Agent 五大核心模块"标准补全缺失能力（规划迭代、记忆体系、工具容错、任务状态、输出校验），需求来源为用户提供的核对清单，规格见 `spec/agent-core-modules.md`。
+本地优先的 Markdown 知识库问答 Agent（Python，无重框架）。五大核心模块已交付并验收（`spec/agent-core-modules.md`）。当前根任务：2026-09 升级——企业安全（G1–G6）、任务可靠性（G7）、度量与能力（G8–G11），规格见 `spec/upgrade-2026-09.md`。
 
 ## 指令优先级
 当前用户指令 > 本文件 > spec 验收规格 > 其他文档（README/MAINTENANCE）。
@@ -18,9 +18,8 @@
 ```bash
 cd /Users/mima1234/Documents/myAgents
 .venv/bin/python -m py_compile src/agents/*.py tests/*.py benchmark/*.py
-.venv/bin/python tests/test_smoke.py
-.venv/bin/python tests/test_web_store.py
-.venv/bin/python tests/<本切片新测试>
+.venv/bin/python -m unittest discover -s tests -p "test_*.py"   # 统一入口（P0-1）：发现并执行全部离线测试，失败必须非 0
+.venv/bin/python tests/<本切片新测试>                            # 直跑兼容仍保留
 ```
 
 ## 完成定义
