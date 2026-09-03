@@ -44,3 +44,29 @@ py_compile 全仓 ✓；八个测试套件（smoke/web_store/tool_hardening/reac
 
 ## 下一步动作
 如需合入：feature/agent-core-modules → main（合并/PR 需用户授权 push）。
+
+---
+
+# 2026-09 升级（进行中）
+
+分支：`feature/upgrade-2026-09`（起点 main @ 9e6791f）。规格：`spec/upgrade-2026-09.md`（11 目标 / 4 批，G1–G11）。控制器 = 根会话；分支会话用子代理承载，均已完成并整合。
+
+## Gate 0 能力清单（一次性，全分支复用）
+darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不适用）；python=.venv 3.13；本升级无外部连接器需求；付费 LLM benchmark 禁跑（除 ACC-U9-03 待单独授权）。
+
+## 已完成
+| 切片 | 内容 | 验收 | 提交 |
+| --- | --- | --- | --- |
+| G1 | 测试入口标准化（P0-1）：10 个 plain-script 套件 → unittest 可发现，76 用例；直跑兼容保留；统一入口写入 AGENTS.md | 独立验收 ACCEPTED（ACC-P0-1-a..f 全过） | bcb8121(spec) + cfee0d7(tests+AGENTS) |
+
+验证证据：`unittest discover` 76/76 OK（改造前 0）；直跑 10/10 退出码 0；失败路径非 0（/tmp 验证）；离线（fake LLM/桩，data/ 用户库零写入）；六类覆盖映射完整。
+
+## 观察项（预存行为，非本切片缺陷，待后续切片决定）
+1. `tests/test_smoke.py::test_load_chunks` 在 cfg.kb_path 指向真实知识库时会只读访问（有存在性守卫、旧行为原样保留）；如需完全隔离可改 fixture 库。
+2. `tests/test_benchmark_sample.py` 依赖本机已缓存的 bge-small-zh-v1.5；冷缓存环境可能触发下载。
+
+## 延期决策
+- G1 覆盖率指标（≥80%）延期：需 coverage.py，超出轻依赖授权，待用户授权。
+
+## 下一步动作
+G2 配置校验（P0-4）：`config.py` 启动/保存双拦截 + `/api/config` 400 契约，验收标准见 `spec/p0-p1-improvement.md` P0-4。push 状态：未 push（未授权）。
