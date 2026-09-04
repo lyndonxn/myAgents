@@ -202,6 +202,14 @@ class EntityMemory:
         except (OSError, ValueError) as exc:
             LOG.warning("实体记忆读取失败，按空库处理: %s", exc)
 
+    # ---- 治理（G4/P0-2） ----
+    def clear(self) -> int:
+        """清空全部实体事实并持久化；返回被清除的实体数（store_dir 未配置时不落盘）。"""
+        n = len(self.entities)
+        self.entities = {}
+        self.save()
+        return n
+
 
 class LongTermMemory:
     """跨会话长期记忆库：MemoryEpisode 向量化存储 + 余弦检索 + 容量淘汰 + 持久化。
@@ -360,6 +368,82 @@ class LongTermMemory:
             lines.append(f"[{i}] Q: {' '.join(ep.question.split())}")
             lines.append(f"    A: {' '.join(ep.answer_summary.split())}")
         return "\n".join(lines)
+
+    # ---- 治理（G4/P0-2）：查看、删除、清空 ----
+    @staticmethod
+    def episode_dict(episode: MemoryEpisode) -> dict:
+        """episode 的对外视图（API 与前端共用）：来源会话、创建时间、命中次数全透出。"""
+        return {
+            "id": episode.id,
+            "session_id": episode.session_id,
+            "ts": episode.ts,
+            "question": episode.question,
+            "answer_summary": episode.answer_summary,
+            "sources": list(episode.sources),
+            "entities": dict(episode.entities),
+            "hits": episode.hits,
+        }
+
+    def list_episodes(self, session_id: str = "", q: str = "", limit: int = 50) -> dict:
+        """查看记忆条目（新→旧排序）。
+
+        session_id 非空时只返回该会话产生的记忆；q 非空时对 question + answer_summary
+        做大小写不敏感的子串匹配；limit 截断返回条数（total 始终为过滤后总数）。
+        """
+        with self._lock:
+            needle = " ".join(str(q).split()).lower()
+            items = [
+                self.episode_dict(e)
+                for e in self.episodes
+                if (not session_id or e.session_id == session_id)
+                and (not needle or needle in self._episode_text(e).lower())
+            ]
+        items.sort(key=lambda d: (d["ts"], d["id"]), reverse=True)
+        try:
+            limit = max(0, int(limit))
+        except (TypeError, ValueError):
+            limit = 50
+        return {"episodes": items[:limit], "total": len(items)}
+
+    def _drop_index(self, idx: int) -> None:
+        """删除指定下标条目；TF-IDF 后端整体重建向量，其余后端同步删除向量行。"""
+        self.episodes.pop(idx)
+        if self.backend.name == "tfidf":
+            self._reembed_all()
+        elif idx < self._vectors.shape[0]:
+            self._vectors = np.delete(self._vectors, idx, axis=0)
+
+    def delete_episode(self, episode_id: str) -> bool:
+        """删除单条长期记忆并持久化；不存在返回 False。"""
+        with self._lock:
+            idx = next((i for i, e in enumerate(self.episodes) if e.id == episode_id), -1)
+            if idx < 0:
+                return False
+            self._drop_index(idx)
+            self.save()
+            return True
+
+    def delete_by_session(self, session_id: str) -> int:
+        """删除指定会话产生的全部记忆并持久化；返回删除条数。"""
+        session_id = str(session_id or "").strip()
+        if not session_id:
+            return 0
+        with self._lock:
+            doomed = [i for i, e in enumerate(self.episodes) if e.session_id == session_id]
+            for idx in reversed(doomed):  # 倒序删，避免下标位移
+                self._drop_index(idx)
+            if doomed:
+                self.save()
+            return len(doomed)
+
+    def clear(self) -> int:
+        """清空全部长期记忆（向量与磁盘同步重置）；返回被清除的条数。"""
+        with self._lock:
+            n = len(self.episodes)
+            self.episodes = []
+            self._vectors = self._empty_vectors()
+            self.save()
+            return n
 
     # ---- 持久化 ----
     def save(self) -> None:

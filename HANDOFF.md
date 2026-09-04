@@ -59,7 +59,8 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 | --- | --- | --- | --- |
 | G1 | 测试入口标准化（P0-1）：10 个 plain-script 套件 → unittest 可发现，76 用例；直跑兼容保留；统一入口写入 AGENTS.md | 独立验收 ACCEPTED（ACC-P0-1-a..f 全过） | bcb8121(spec) + cfee0d7(tests+AGENTS) |
 | G2 | 配置校验（P0-4）：validate_config/ConfigError/normalize_config 落地规则表；load_config 失败抛错不静默启动；POST /api/config 无效值 400（errors 列表，不回显 Key）；归一化布尔字符串与枚举 | 独立验收 ACCEPTED（ACC-P0-4-a..f 全过，含用户 runtime.json 逐字节不变取证） | 85957d5（含 spec 规则表） |
-| G3 | 数据外发默认关闭 + 回答状态披露（P0-3 + ACC-U3-01..03）：三开关（kb_fallback_web/long_term_enabled/entities_enabled）默认 false；`ask(remember=, allow_web=)` 请求级许可（None→按配置，False 强禁，True 强许）；runtime.json 显式值优先 + 迁移提示一次/进程；`metrics.degraded/web_used` 透出 /api/ask、任务写回与任务详情；webui 答案卡片状态行 + 设置页外发说明 + 清空会话确认 | 控制器验证全过（15 用例 G3 套件 + 全量 103/103） | 见本次提交 |
+| G3 | 数据外发默认关闭 + 回答状态披露（P0-3 + ACC-U3-01..03）：三开关（kb_fallback_web/long_term_enabled/entities_enabled）默认 false；`ask(remember=, allow_web=)` 请求级许可（None→按配置，False 强禁，True 强许）；runtime.json 显式值优先 + 迁移提示一次/进程；`metrics.degraded/web_used` 透出 /api/ask、任务写回与任务详情；webui 答案卡片状态行 + 设置页外发说明 + 清空会话确认 | 控制器验证全过（15 用例 G3 套件 + 全量 103/103） | 2e9ca34 |
+| G4 | 记忆治理（P0-2）：新增长期记忆治理方法（list_episodes 过滤/搜索/截断、delete_episode 单条删除含向量行对齐、delete_by_session 按会话删除、clear 清空）与 EntityMemory.clear；Web API 五端点（GET /api/memory?session_id=&q=&limit=、GET /api/memory/entities、DELETE /api/memory/{id}、DELETE /api/memory?session_id=、POST /api/memory/clear）+ 新增 do_DELETE；/api/reset 联动删除该会话长期记忆（long_term_removed 透出，未开启幂等跳过）；webui 新增「记忆」设置页（搜索/逐条删除/清空全部/实体事实/未开启提示） | 控制器验证全过（9 用例 G4 套件 + 全量 112/112） | 见本次提交 |
 
 验证证据：`unittest discover` 76/76 OK（改造前 0）；直跑 10/10 退出码 0；失败路径非 0（/tmp 验证）；离线（fake LLM/桩，data/ 用户库零写入）；六类覆盖映射完整。
 
@@ -74,7 +75,20 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-G4 记忆治理（P0-2）：长期记忆淘汰/过期策略、记忆导出与删除入口、与 G3 共用的设置页改动面收尾。push 状态：未 push（未授权）。
+G5 密钥安全（P0-5）：统一 /api/config 保存路径 llm.api_key 口径（G2 观察项 3）、密钥脱敏与审计口径、API Key 永不回显的复查。push 状态：未 push（未授权）。
+
+---
+
+## G4 切片记录（2026-09-04，控制器续接）
+
+- **验证证据**：`unittest discover` 112/112 OK（G3 后 103 → 新增 test_memory_governance 9 用例）；compileall 全仓通过；全程离线（TfidfHashEmbeddingBackend + 裸 Handler 桩，不读写用户 data/runtime.json 与 .env）。
+- **P0-2 范围逐条落实**：
+  - `GET /api/memory?session_id=&q=&limit=` → `{"episodes":[...], "total":n}`（episode dict 含 id/session_id/ts/question/answer_summary/sources/entities/hits——来源会话、创建时间、命中次数全透出）；长期记忆未开启返回 `{"episodes":[],"total":0,"disabled":true}`。
+  - `DELETE /api/memory/{episode_id}` → 200/404；`DELETE /api/memory?session_id=` → `{"ok":true,"removed":n}`；`POST /api/memory/clear` → 长期 + 实体同步清空并返回计数；`GET /api/memory/entities` → 实体事实视图。
+  - episode 来源会话/创建时间/命中次数字段 S4 已有（session_id/ts/hits），本切片通过 API 视图透出。
+- **关键实现**：`LongTermMemory._drop_index`（TF-IDF 整体重建 / 其余后端向量行删除，保证删除后检索不维度错位）；`Handler.do_DELETE`（与 GET/POST 同款兜底与 Host 校验）；/api/reset 联动长期记忆删除（响应新增 `long_term_removed` 键，向后兼容）。
+- **涉及文件**：src/agents/{long_memory,web_server}.py、scripts/webui.html（记忆设置页 + escHtml 工具 + CSS）、tests/test_memory_governance.py（新增 9 用例）。
+- **注意**：/api/sessions 分支的原函数内 `from urllib.parse import ...` 局部导入上移到模块级（局部导入会使同函数内后续 `parse_qs` 触发 UnboundLocalError）。
 
 ---
 

@@ -20,6 +20,7 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 from agents.agent import Agent
 from agents.config import PROJECT_ROOT, load_config, normalize_config, save_runtime, validate_config
@@ -315,7 +316,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"workspaces": self.store.workspaces(), "active": self._active_workspace()["id"]})
             return
         if self.path.startswith("/api/sessions"):
-            from urllib.parse import parse_qs, urlparse
             parsed = urlparse(self.path)
             parts = parsed.path.strip("/").split("/")
             if len(parts) == 3 and parts[2]:
@@ -330,6 +330,29 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/stats":
             self._send_json(self.store.stats(self._active_workspace()["id"]))
+            return
+        # G4/P0-2 记忆治理：查看长期记忆条目（GET /api/memory?session_id=&q=&limit=）
+        # 与实体事实（GET /api/memory/entities）
+        if self.path.startswith("/api/memory"):
+            parsed = urlsplit(self.path)
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) >= 3 and parts[2] == "entities":
+                em = getattr(self.agent, "entity_memory", None)
+                self._send_json({"entities": dict(em.entities) if em is not None else {}})
+                return
+            if parsed.path == "/api/memory":
+                params = parse_qs(parsed.query)
+                lm = getattr(self.agent, "long_memory", None)
+                if lm is None:
+                    self._send_json({"episodes": [], "total": 0, "disabled": True})
+                else:
+                    self._send_json(lm.list_episodes(
+                        session_id=params.get("session_id", [""])[0],
+                        q=params.get("q", [""])[0],
+                        limit=params.get("limit", ["50"])[0],
+                    ))
+                return
+            self._send_json({"error": "not found"}, 404)
             return
         # S5 任务列表：摘要视图（不含 plan/steps 明细），按 updated_at 倒序
         if self.path == "/api/tasks":
@@ -404,6 +427,43 @@ class Handler(BaseHTTPRequestHandler):
             return {"logs": logs, "path": str(log_file), "total": len(all_lines), "truncated": size > 200_000}
         except OSError as exc:
             return {"logs": [], "path": str(log_file), "error": str(exc)}
+
+    # ---- DELETE ----
+    def do_DELETE(self):  # noqa: N802
+        try:
+            self._do_delete()
+        except Exception as exc:  # noqa: BLE001 - 兜底：不泄漏堆栈
+            LOG.exception("DELETE %s 处理异常", self.path)
+            try:
+                self._send_json({"error": "服务器内部错误"}, 500)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _do_delete(self):
+        if not self._check_host():
+            self._send_json({"error": "非法访问"}, 403)
+            return
+        parsed = urlsplit(self.path)
+        # G4/P0-2：删除指定会话产生的全部长期记忆（DELETE /api/memory?session_id=）
+        if parsed.path == "/api/memory":
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            lm = getattr(self.agent, "long_memory", None)
+            removed = lm.delete_by_session(session_id) if lm is not None else 0
+            LOG.info("删除会话长期记忆 | session=%s | removed=%d", session_id, removed)
+            self._send_json({"ok": True, "removed": removed})
+            return
+        # G4/P0-2：删除单条长期记忆（DELETE /api/memory/{episode_id}）
+        if parsed.path.startswith("/api/memory/"):
+            episode_id = parsed.path[len("/api/memory/"):].strip("/")
+            lm = getattr(self.agent, "long_memory", None)
+            deleted = lm.delete_episode(episode_id) if lm is not None else False
+            if deleted:
+                LOG.info("删除长期记忆条目 | episode=%s", episode_id)
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"error": "记忆条目不存在"}, 404)
+            return
+        self._send_json({"error": "not found"}, 404)
 
     # ---- POST ----
     def do_POST(self):  # noqa: N802
@@ -639,8 +699,22 @@ class Handler(BaseHTTPRequestHandler):
             self.store.clear_session(session_id)
             with self.lock:
                 self.agent.reset_memory()
-            LOG.info("重置会话记忆")
-            self._send_json({"ok": True, "memory_turns": 0})
+                # G4/P0-2：清空会话同步删除该会话产生的长期记忆（长期记忆关闭时跳过）
+                lm = getattr(self.agent, "long_memory", None)
+                removed = lm.delete_by_session(session_id) if lm is not None else 0
+            LOG.info("重置会话记忆（同步删除长期记忆 %d 条）", removed)
+            self._send_json({"ok": True, "memory_turns": 0, "long_term_removed": removed})
+            return
+
+        # G4/P0-2：清空全部长期记忆与实体记忆
+        if self.path == "/api/memory/clear":
+            with self.lock:
+                lm = getattr(self.agent, "long_memory", None)
+                em = getattr(self.agent, "entity_memory", None)
+                episodes = lm.clear() if lm is not None else 0
+                entities = em.clear() if em is not None else 0
+            LOG.info("清空长期记忆与实体记忆（episodes=%d，entities=%d）", episodes, entities)
+            self._send_json({"ok": True, "episodes": episodes, "entities": entities})
             return
 
         if self.path == "/api/sessions":
