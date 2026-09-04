@@ -74,8 +74,42 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G1 覆盖率指标（≥80%）延期：需 coverage.py，超出轻依赖授权，待用户授权。
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
-## 下一步动作
-G11 本地 LLM 离线档位（spec/upgrade-2026-09 ACC-U11）：llm.py 本地后端（Ollama/兼容接口）、config 离线档位、webui 提示；含离线降级路径。push 状态：未 push（未授权）。
+## 收官总览（2026-09-04）
+
+**2026-09 升级收官：G1–G10 全部完成并提交，G11 经用户决策延期挂账。** 分支 `feature/upgrade-2026-09`（13 个提交，起点 main @ 9e6791f），**未 push、未合入 main（均需用户授权）**。
+
+| 切片 | 内容 | 提交 |
+| --- | --- | --- |
+| G1 | 测试入口标准化（unittest 76→156 用例） | cfee0d7 |
+| G2 | 配置校验（validate_config/400/布尔归一化） | 85957d5 |
+| G3 | 数据外发默认关闭 + 回答状态披露（P0-3） | 2e9ca34 |
+| G4 | 记忆治理（查看/删除/清空 API + 设置页 + 会话联动） | f46f112 |
+| G5 | 密钥安全（权限检查/0600/拒绝保存）+ 任务写回幂等 | 7eb0ab1 |
+| G6 | 审计轨迹（按天 JSONL，四层事件，不记正文与 Key） | fb62084 |
+| G7 | 任务看门狗（心跳/步骤超时/总超时 → paused 可恢复） | 1b3b352 |
+| G8 | 难评测集（100 题×10 类）+ reward 模块 | 19ded63 |
+| G9 | 速度成本包（快路径/max_tokens/重排/证据压缩） | c2cb0a1 |
+| G10 | 检索迭代循环（改写再检索 + max_search_calls 预算） | ffc7169 |
+
+最终验证：`unittest discover` **156/156 OK**；直跑 18/18 退出码 0；compileall 通过；全程离线。
+
+### 延期挂账（均为显式决策，无隐藏风险）
+1. **G11 本地 LLM 离线档位**（用户决策暂不做）：LLMClient 本地端点空 Key、非 DeepSeek 模型 JSON 约束、离线档位、一键准备脚本（ACC-U11-01..03 未开始）。
+2. **ACC-U9-03 / ACC-U10-03**：付费 100 题实跑对比（延迟/token/reward 前后对比），需用户单独授权后运行 `benchmark/run_benchmark.py --questions benchmark/questions_hard.json`。
+3. **P1-2 剩余项**：锁拆分（会话记忆/执行/写回三把锁）与可配置多 worker（单 worker 串行已保证正确性）。
+4. **G1 覆盖率指标 ≥80%**：需 coverage.py，超出轻依赖授权。
+5. **P1-5 统一错误码契约**、P1-4 证据级引用校验、P1-1 模块解耦：P1 挂账后置。
+
+### 收尾状态
+- README 已同步（核心能力/当前边界/升级章节）。
+- 用户工作区未提交的私人文件（benchmark 结果、设计文档等）保持未跟踪，未纳入任何提交。
+- `data/runtime.json` 含真实 API Key（gitignored；**建议轮换**）。
+- G3 默认行为变更：联网降级/长期记忆/实体记忆默认关闭——存量 runtime.json 未显式设置时启动会提示一次。
+
+### 如需重启工作
+1. G11 实现路径已明确（见 spec/upgrade-2026-09.md ACC-U11-01..03）。
+2. 合入：`feature/upgrade-2026-09` → main（需用户授权 push）。
+3. 付费对比评测：授权后先跑改造前基线（main 分支）再跑本分支，对比 p50/p95、token 与 reward。
 
 ---
 
