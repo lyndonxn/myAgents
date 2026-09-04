@@ -166,6 +166,8 @@ _INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "tasks.step_timeout_s": (1, 86400),
     "tasks.total_timeout_s": (1, 86400),
     "tasks.watchdog_interval_s": (1, 3600),
+    "planner.fast_path_max_len": (10, 500),
+    "synthesis.max_tokens": (64, 32768),
 }
 _POSITIVE_INT_KEYS: tuple[str, ...] = ("llm.timeout",)  # 整数且 >0
 # 浮点规则（int 或 float 均可，bool 不算，闭区间）
@@ -202,6 +204,8 @@ _BOOL_KEYS: frozenset[str] = frozenset({
     "memory.entities_enabled",
     "audit.enabled",
     "audit.log_content",
+    "planner.fast_path",
+    "synthesis.evidence_compression",
 })
 _NONEMPTY_NO_NUL_KEYS: tuple[str, ...] = ("kb_path", "data_dir")  # 非空且无 NUL
 _URL_KEYS: tuple[str, ...] = ("llm.base_url", "vision.base_url")  # 非空时须 http(s):// 开头
@@ -692,6 +696,27 @@ class Config:
     def tasks_watchdog_interval_s(self) -> float:
         """看门狗扫描间隔（秒）。"""
         return float(self.get("tasks.watchdog_interval_s", 30.0))
+
+    # ---- 速度与成本包（G9） ----
+    @property
+    def planner_fast_path(self) -> bool:
+        """快路径：无历史的简单事实题跳过规划，直接单步检索→合成。"""
+        return bool(self.get("planner.fast_path", True))
+
+    @property
+    def planner_fast_path_max_len(self) -> int:
+        """快路径问题长度上限（字符）。"""
+        return int(self.get("planner.fast_path_max_len", 60))
+
+    @property
+    def synthesis_max_tokens(self) -> int:
+        """合成最大输出 token（收紧以降低成本与延迟）。"""
+        return int(self.get("synthesis.max_tokens", 1024))
+
+    @property
+    def synthesis_evidence_compression(self) -> bool:
+        """句子级证据压缩：按查询相关性裁剪送入合成的片段文本。"""
+        return bool(self.get("synthesis.evidence_compression", True))
 
 
 def _maybe_log_egress_migration_hint() -> None:

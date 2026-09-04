@@ -43,7 +43,7 @@ from .long_memory import (
     build_memory_backend,
 )
 from .memory import SessionMemory
-from .planner import Plan, Planner, rewrite_query
+from .planner import Plan, PlanStep, Planner, rewrite_query
 from .retriever import Retriever
 from .tools import ToolContext, build_tools, describe_tools, web_search_tool
 from .vector_store import VectorStore
@@ -59,6 +59,63 @@ SYNTHESIS_SYSTEM = """你是知识库问答助手。基于检索到的片段回�
    随后询问用户"需要我联网搜索吗？回复「联网搜索」即可"。未经用户同意不要使用网络内容作答，
    也不要把无关片段硬凑成答案。
 """
+
+# G9 快路径（启发式门控）：出现这些线索的问题交给完整规划器（多跳/对比/条件/追加诉求）
+_MULTI_HOP_MARKERS: tuple[str, ...] = (
+    "对比", "比较", "分别", "然后", "接着", "以及", "此外", "同时",
+    "如果", "还是", "首先", "其次", "另外", "结合", "综合", "顺便",
+)
+
+
+def _is_simple_question(question: str, max_len: int = 60) -> bool:
+    """启发式判定「简单事实题」：短、单句、无多跳/追加线索 → 可跳过规划直接检索→合成。"""
+    text = " ".join(str(question or "").split())
+    if not text or len(text) > max_len:
+        return False
+    if text.count("？") + text.count("?") > 1 or text.count("，") + text.count(",") >= 2:
+        return False
+    return not any(marker in text for marker in _MULTI_HOP_MARKERS)
+
+
+def compress_evidence(text: str, query: str, target_ratio: float = 0.7, min_chars: int = 200) -> str:
+    """句子级证据压缩（G9）：按查询词相关性裁剪送入合成的片段文本。
+
+    - 按句切分（。！？；与换行），jieba 提取查询词（长度 ≥2）；
+    - 只保留与查询词有交集的句子，按原文顺序拼接；目标把长度压到 target_ratio 以内；
+    - 文本过短（< min_chars）、无相关句或相关句已占满原文 95% 时原样返回（压缩无收益）。
+    纯离线、确定性；压缩仅影响送入合成的上下文，不影响来源收集与引用校验。
+    """
+    raw = " ".join(str(text or "").split())
+    if len(raw) < min_chars:
+        return str(text or "")
+    import re as _re
+
+    sentences = [s for s in _re.split(r"(?<=[。！？!?；;])", raw) if s.strip()]
+    if len(sentences) <= 2:
+        return str(text or "")
+    import jieba
+
+    tokens = {t for t in jieba.lcut(str(query or "")) if len(t.strip()) >= 2}
+    scored = [(s, sum(1 for t in tokens if t in s)) for s in sentences]
+    relevant = [s for s, sc in scored if sc > 0]
+    if not relevant or sum(len(s) for s in relevant) >= len(raw) * 0.95:
+        return str(text or "")  # 无相关句（压缩会丢证据）或压缩无收益
+    budget = max(1, int(len(raw) * target_ratio))
+    kept: list[str] = []
+    used = 0
+    for sentence, score in scored:  # 原文顺序，保证叙述连贯
+        if score > 0 and used + len(sentence) <= budget:
+            kept.append(sentence)
+            used += len(sentence)
+    if used < len(raw) * 0.5:  # 压缩过狠（>50% 被裁）时收紧到预算线重试一次保守版
+        kept, used = [], 0
+        for sentence, score in scored:
+            if score > 0:
+                kept.append(sentence)
+                used += len(sentence)
+    if not kept:
+        return str(text or "")
+    return "".join(kept)
 
 
 @dataclass
@@ -375,11 +432,26 @@ class Agent:
 
             # 1. 规划（规划器能看到历史，从而理解追问；规则要求 search query 独立；
             #    工具清单按本次联网许可过滤——allow_web=False 时不含 web_search）
-            planner = Planner(self.config, self.llm)
-            answer.plan = planner.plan(
-                question, describe_tools(run_tools), history_text=history_text, longterm_text=longterm_text
+            # G9 快路径：无会话历史 + 启发式判定简单事实题 → 跳过规划，直接单步检索→合成
+            fast_path = (
+                self.config.planner_fast_path
+                and self.memory.is_empty
+                and _is_simple_question(question, self.config.planner_fast_path_max_len)
             )
-            answer.llm_calls += 1
+            if fast_path:
+                answer.plan = Plan(
+                    reasoning="G9 快路径：简单事实题跳过规划",
+                    plan_summary="快路径：单步知识库检索",
+                    steps=[PlanStep(action="search_knowledge_base", input={"query": question}, step_id=1)],
+                )
+                if verbose:
+                    print("  · [快路径] 跳过规划，单步检索")
+            else:
+                planner = Planner(self.config, self.llm)
+                answer.plan = planner.plan(
+                    question, describe_tools(run_tools), history_text=history_text, longterm_text=longterm_text
+                )
+                answer.llm_calls += 1
             # 退化路径用改写后的独立查询兜底，避免指代词检索失败
             if answer.plan.fallback and q_work != question and answer.plan.steps:
                 answer.plan.steps[0].input["query"] = q_work
@@ -394,9 +466,11 @@ class Agent:
                     print(f"  · {step.display()}")
 
             # 2.5 反思重规划（S2 ReAct 迭代）：执行后让规划器审视轨迹，必要时补步再执行
-            self._reflect_and_extend(
-                answer, planner, executor, question, history_text, verbose=verbose, tools=run_tools
-            )
+            # （G9：快路径为简单事实题，跳过反思——省一次 LLM 调用）
+            if not fast_path:
+                self._reflect_and_extend(
+                    answer, planner, executor, question, history_text, verbose=verbose, tools=run_tools
+                )
 
             # 3. 生成（结合对话历史，保持连贯；全部步骤结束后统一合成一次）
             # 知识库零命中且未联网（用户未同意）→ 追加确定性提示：答「未在知识库内」并询问是否联网
@@ -671,24 +745,29 @@ class Agent:
             out = step.output
             if isinstance(out, dict) and "text" in out:
                 text = str(out["text"])
+                # G9 句子级证据压缩：按查询相关性裁剪片段文本（默认开，可配）
+                if self.config.synthesis_evidence_compression:
+                    text = compress_evidence(text, question)
                 context_parts.append(f"【工具: {step.action}】\n{text}")
 
-        history_block = f"对话历史：\n{history_text}\n\n" if history_text else ""
+        # G9 prompt 重排：稳定前缀（指令 + 证据上下文）在前，对话历史与问题在后
+        # ——对 DeepSeek 等前缀缓存友好，多轮共享同一前缀可降低计费与延迟。
         user = (
-            f"{history_block}"
-            f"用户问题：{question}\n\n"
-            f"规划：{plan.plan_summary or plan.reasoning or '(无)'}\n\n"
             "以下是工具执行结果（检索片段/计算等）：\n\n"
             + "\n\n".join(context_parts)
             + "\n\n请基于以上信息回答，正文标注 [n] 引用，并在末尾列出参考来源。"
             "如问题是对之前话题的追问或对比，请结合对话历史保持回答连贯。"
+            + (f"\n\n规划：{plan.plan_summary or plan.reasoning or '(无)'}" if (plan.plan_summary or plan.reasoning) else "")
+            + (f"\n\n对话历史：\n{history_text}" if history_text else "")
+            + f"\n\n用户问题：{question}"
             + extra_hint
         )
         result = self.llm.chat(
             [
                 {"role": "system", "content": SYNTHESIS_SYSTEM},
                 {"role": "user", "content": user},
-            ]
+            ],
+            max_tokens=self.config.synthesis_max_tokens,  # G9：输出预算收紧（默认 1024）
         )
         self._accumulate_usage(result)
         return result.text

@@ -62,7 +62,13 @@ def _make_tool(name: str, func, properties: dict, required: list[str]) -> Tool:
 
 def _make_agent(llm: ScriptedLLM, tools: dict[str, Tool], raw: dict | None = None) -> Agent:
     """离线 Agent：不加载索引，直接注入假工具注册表与执行上下文。"""
-    agent = Agent(Config(raw or {}), llm=llm, lazy_index=True)
+    merged: dict = {"planner": {"fast_path": False}}  # G9：考察完整路径（调用方可覆盖）
+    for key, value in (raw or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    agent = Agent(Config(merged), llm=llm, lazy_index=True)
     agent._index_loaded = True  # 跳过索引加载
     agent.tools = tools
     agent._ctx = ToolContext()
@@ -296,7 +302,7 @@ class ReActLoopTests(unittest.TestCase):
             {"action": "probe", "input": {"q": "s2"}, "purpose": ""},
         ])
         raw = {"planner": {"max_steps": 2, "reflect": True, "max_reflections": 3}, "tools": {"max_retries": 0}}
-        llm = ScriptedLLM([plan_json, reflect_json(1), "答案"], Config(raw))
+        llm = ScriptedLLM([plan_json, reflect_json(1), "答案"], Config({"planner": {"fast_path": False}, **raw}))
         agent = _make_agent(llm, tools, raw)
         answer = agent.ask("护栏问题")
 

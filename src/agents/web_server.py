@@ -52,6 +52,7 @@ CONFIG_FIELDS = {
     "vision": {"base_url", "model", "api_key"},
     "audit": {"retention_days", "log_content"},
     "tasks": {"step_timeout_s", "total_timeout_s", "watchdog_interval_s"},
+    "synthesis": {"max_tokens", "evidence_compression"},
 }
 MAX_BODY = 10 * 1024 * 1024        # 请求体上限 10MB
 MAX_IMAGE_DATA_URL = 6 * 1024 * 1024  # 图片 data URL 上限 6MB

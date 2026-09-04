@@ -281,7 +281,7 @@ class CitationsTests(unittest.TestCase):
         synth_text = "RAG 是检索增强生成[1]。编造的编号[9]不存在。"
 
         llm = ScriptedLLM([plan_json, reflect_json, synth_text], Config({"tools": {"max_retries": 0}}))
-        agent = Agent(Config({"tools": {"max_retries": 0}}), llm=llm, lazy_index=True)
+        agent = Agent(Config({"tools": {"max_retries": 0}, "planner": {"fast_path": False}}), llm=llm, lazy_index=True)  # G9：考察完整路径
         agent._index_loaded = True  # 跳过索引加载
         agent.tools = tools
         agent._ctx = ToolContext()
@@ -309,7 +309,7 @@ class CitationsTests(unittest.TestCase):
 
         # 全部引用合法时不告警、文本不变
         llm2 = ScriptedLLM([plan_json, reflect_json, "干净答案[1]与[2]"], Config({"tools": {"max_retries": 0}}))
-        agent2 = Agent(Config({"tools": {"max_retries": 0}}), llm=llm2, lazy_index=True)
+        agent2 = Agent(Config({"tools": {"max_retries": 0}, "planner": {"fast_path": False}}), llm=llm2, lazy_index=True)  # G9：考察完整路径
         agent2._index_loaded = True
         agent2.tools = tools
         agent2._ctx = ToolContext()

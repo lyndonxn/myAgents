@@ -52,6 +52,8 @@ planner:
   model: "deepseek-chat"
   temperature: 0.2
   max_steps: 5           # 计划最大步骤数
+  fast_path: true        # G9 快路径：无历史的简单事实题跳过规划，直接单步检索→合成
+  fast_path_max_len: 60  # 快路径问题长度上限（字符；超出走完整规划）
   fallback_direct: true  # 规划失败时退化为"直接单步检索"
   reflect: true          # 首轮执行后是否反思重规划（ReAct 迭代总开关；关闭后即使有失败步骤也不反思）
   max_reflections: 1     # 反思重规划最多轮数（0=关闭反思重规划；补步后总步数硬上限为 max_steps*2）
@@ -87,3 +89,8 @@ tasks:
   step_timeout_s: 600        # 步骤级超时：心跳停滞超过该秒数的 running 任务被看门狗转 paused
   total_timeout_s: 3600      # 任务级总超时：执行超过该秒数后不再推进剩余步骤（转 paused 可恢复）
   watchdog_interval_s: 30    # 看门狗扫描间隔（秒）
+
+# 合成输出（G9 速度与成本包）
+synthesis:
+  max_tokens: 1024           # 合成最大输出 token（从全局 max_tokens 收紧，降低成本与延迟）
+  evidence_compression: true # 句子级证据压缩：按查询相关性裁剪送入合成的片段文本（目标输入 token 降 ≥30%）

@@ -122,6 +122,7 @@ def _make_agent(td: str, llm: ScriptedLLM, tools: dict[str, Tool], overrides: di
            "tools": {"max_retries": 0}}
     for section, values in (overrides or {}).items():
         raw.setdefault(section, {}).update(values)
+    raw.setdefault("planner", {}).setdefault("fast_path", False)  # G9：考察完整路径
     agent = Agent(Config(raw), llm=llm, lazy_index=True)
     agent._index_loaded = True  # 跳过索引加载
     agent.tools = tools

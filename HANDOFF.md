@@ -75,7 +75,19 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-G9 速度与成本包（spec/upgrade-2026-09 ACC-U9-01..03）：快路径（简单事实题跳过 planner）、合成 max_tokens 收紧、prompt 重排（缓存友好）、句子级证据压缩（目标输入 token 降 ≥30%）；付费 benchmark 实跑（ACC-U9-03）需单独授权。push 状态：未 push（未授权）。
+G10 检索迭代循环（spec/upgrade-2026-09 ACC-U10-01..03）：检索→评估→按需改写再检索，复用 @step:N 机制，预算 `planner.max_search_calls`（默认 3）防失控。push 状态：未 push（未授权）。
+
+---
+
+## G9 切片记录（2026-09-04，控制器续接）
+
+- **验证证据**：`unittest discover` 152/152 OK（G8 后 143 → 新增 test_speed_cost 9 用例）；直跑 17/17 退出码 0；compileall 通过；全程离线。
+- **快路径（ACC-U9-01/02 ✓）**：`_is_simple_question` 启发式门控（短 ≤60 字符、单问句、无多跳线索表）+ 无会话历史 → 跳过规划与反思，直接单步检索→合成（0 次规划调用）；多跳/对比题与追问场景不受影响；`planner.fast_path` 配置开关。简单题 LLM 调用从 3 降为 1。
+- **合成优化**：`synthesis.max_tokens`（默认 1024，原用全局 llm.max_tokens）传至合成调用；`_synthesize` prompt 重排——稳定前缀（指令+证据上下文）在前、规划摘要/对话历史/问题在后（DeepSeek 前缀缓存友好）。
+- **句子级证据压缩**：`compress_evidence(text, query)`（jieba 提取查询词，按句相关性保留，目标 ≤70% 长度；过短/无相关句/全相关守卫原样返回）；`synthesis.evidence_compression` 开关默认开。实测构造样本 396→140 字符（降 65%）。ACC-U9-03（100 题实跑对比）按规需单独授权，未执行。
+- **配置**：config.yaml 新增 `planner.{fast_path,fast_path_max_len}` 与 `synthesis.{max_tokens,evidence_compression}` + 校验规则 + 设置白名单（synthesis 节）。
+- **既有测试适配**：考察完整规划路径的测试（egress/long_memory/react_loop/citations/audit）统一注入 `planner.fast_path=False`（深合并保留各用例覆盖）。
+- **涉及文件**：src/agents/{agent,config}.py、config.yaml、src/agents/web_server.py（白名单）、tests/{test_speed_cost(新),test_egress_defaults,test_long_memory,test_react_loop,test_citations,test_audit}.py。
 
 ---
 

@@ -102,8 +102,12 @@ def kb_hit_tool() -> Tool:
 
 
 def _make_agent(llm: ScriptedLLM, tools: dict[str, Tool], raw: dict | None = None) -> Agent:
-    """离线 Agent：不加载索引，注入假工具注册表与执行上下文。"""
-    agent = Agent(Config(raw or {}), llm=llm, lazy_index=True)
+    """离线 Agent：不加载索引，注入假工具注册表与执行上下文。
+
+    G9：本文件测试考察完整规划路径，默认关闭快路径（调用方可显式覆盖）。
+    """
+    merged = {"planner": {"fast_path": False}, **(raw or {})}
+    agent = Agent(Config(merged), llm=llm, lazy_index=True)
     agent._index_loaded = True
     agent.tools = tools
     agent._ctx = ToolContext()

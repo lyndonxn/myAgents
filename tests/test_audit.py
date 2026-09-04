@@ -73,7 +73,7 @@ def kb_hit_tool():
 
 
 def make_agent(llm, tmp: Path):
-    agent = Agent(Config({"tools": {"max_retries": 0}}), llm=llm, lazy_index=True)
+    agent = Agent(Config({"tools": {"max_retries": 0}, "planner": {"fast_path": False}}), llm=llm, lazy_index=True)  # G9：考察完整路径
     agent._index_loaded = True
     agent.tools = {"search_knowledge_base": kb_hit_tool()}
     agent._ctx = ToolContext()
