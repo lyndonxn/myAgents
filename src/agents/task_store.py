@@ -61,6 +61,7 @@ class TaskRecord:
     usage: dict = field(default_factory=dict)       # {prompt_tokens, completion_tokens, cost_yuan}
     citations_valid: int = 0                        # 引用校验通过数（T2：随答案写回会话展示）
     citations_invalid: int = 0                      # 被剔除的非法引用数
+    writeback_id: str = ""                          # P0-5 写回幂等标识：写回成功后置为 task_id（旧文件缺失时兼容为空）
     created_at: str = ""
     updated_at: str = ""
 
@@ -97,6 +98,7 @@ class TaskRecord:
             usage=usage if isinstance(usage, dict) else {},
             citations_valid=valid,
             citations_invalid=invalid,
+            writeback_id=str(data.get("writeback_id", "")),
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )

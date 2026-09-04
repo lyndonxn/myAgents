@@ -23,7 +23,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urlsplit
 
 from agents.agent import Agent
-from agents.config import PROJECT_ROOT, load_config, normalize_config, save_runtime, validate_config
+from agents import config as config_mod
+from agents.config import (
+    PROJECT_ROOT,
+    key_file_permissions_ok,
+    load_config,
+    normalize_config,
+    save_runtime,
+    validate_config,
+)
 from agents.llm import LLMClient, LLMError
 from agents.logger import get_logger, setup_logging
 from agents.task_runner import TaskRunner
@@ -220,12 +228,25 @@ class Handler(BaseHTTPRequestHandler):
         metrics 附 task_id、耗时与用量（口径对齐 _persist_answer，record 没有的键省略），
         并按相同 kb_hit 口径记录查询事件。回调在 TaskRunner 工作线程执行且不持锁，
         与 /api/ask 的互斥由本方法自行持有 Handler.lock 保证。
+
+        P0-5 写回幂等：writeback_id 已置位（重复回调）或 WebStore 已存在同 task_id 的
+        assistant 消息（写回后崩溃重放 / 旧记录升级）→ 跳过并补齐标识，同一任务的消息
+        只出现一次。写回成功才置 writeback_id 并持久化；失败保持 completed 与空
+        writeback_id（可重试），不回滚任务答案。
         """
         if getattr(record, "status", "") != "completed":
+            return
+        if getattr(record, "writeback_id", ""):
+            LOG.info("任务结果已写回过，跳过重复回调 | task=%s", record.task_id)
             return
         store = cls.store
         if store is None:
             LOG.warning("任务结果写回失败: WebStore 未就绪 | task=%s", record.task_id)
+            return
+        # 幂等双保险：库中已有该任务的写回消息（如写回后未置标识即崩溃）→ 只补标识
+        if store.has_task_writeback(record.session_id, record.task_id):
+            cls._mark_writeback(record)
+            LOG.info("检测到任务结果已在会话中，补齐写回标识 | task=%s", record.task_id)
             return
         usage = record.usage if isinstance(record.usage, dict) else {}
         metrics: dict = {}
@@ -241,13 +262,20 @@ class Handler(BaseHTTPRequestHandler):
         # G3 状态披露：任务写回消息同样带外发标记（与 /api/ask 的 metrics 口径一致）
         metrics.update(_egress_flags(record.steps))
         with cls.lock:
-            store.add_message(record.session_id, "user", record.question)
-            store.add_message(
-                record.session_id, "assistant", record.final_answer, record.sources, record.plan, metrics
+            store.add_task_result(
+                record.session_id, record.workspace_id, record.question, record.final_answer,
+                record.sources, record.plan, metrics,
             )
-            kb_hit = bool(record.sources) and any(not str(source).startswith("http") for source in record.sources)
-            store.record_query(record.workspace_id, record.session_id, kb_hit)
+        cls._mark_writeback(record)
         LOG.info("任务结果已写回会话: %s | session=%s", record.task_id, record.session_id)
+
+    @classmethod
+    def _mark_writeback(cls, record) -> None:
+        """写回成功后置幂等标识并持久化到任务库（task_runner 未装配时仅内存置位）。"""
+        record.writeback_id = record.task_id
+        task_store = cls.task_runner.store if cls.task_runner is not None else None
+        if task_store is not None:
+            task_store.update(record)
 
     def _session_for_workspace(self, session_id: str, workspace_id: str) -> str:
         if not session_id:
@@ -867,9 +895,26 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(value, str) and not value.strip():
                     continue
                 section_dict[key] = value
-        key = str(payload.get("llm", {}).get("api_key", "")).strip()
-        if key and "****" not in key:
+        key = payload.get("llm", {}).get("api_key", "")
+        # P0-5 统一口径（G2 观察项 3）：与 vision.api_key 一致只接受字符串；掩码回显值不落盘。
+        # 非 str（int/float 等）原样进入 overrides，由 validate_config 报类型错误 → 400。
+        if isinstance(key, str):
+            key = key.strip()
+            if key and "****" not in key:
+                overrides.setdefault("llm", {})["api_key"] = key
+        elif key not in ("", None):
             overrides.setdefault("llm", {})["api_key"] = key
+        # P0-5 密钥安全：runtime.json 权限过宽时拒绝保存新密钥（普通配置项不受影响）
+        contains_new_key = (
+            isinstance(overrides.get("llm", {}).get("api_key"), str)
+            or isinstance(overrides.get("vision", {}).get("api_key"), str)
+        )
+        if contains_new_key and not key_file_permissions_ok(config_mod.RUNTIME_PATH):
+            LOG.warning("runtime.json 权限过宽，拒绝保存新密钥")
+            return 403, {
+                "error": "runtime.json 权限过宽（组/其他用户可读），已拒绝保存新密钥。"
+                         "请先执行 chmod 600 data/runtime.json 收紧权限后重试。"
+            }
         if overrides:
             proposed = copy.deepcopy(self.agent.config._raw)
             _deep_update(proposed, overrides)

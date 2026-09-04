@@ -75,7 +75,28 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-G5 密钥安全（P0-5）：统一 /api/config 保存路径 llm.api_key 口径（G2 观察项 3）、密钥脱敏与审计口径、API Key 永不回显的复查。push 状态：未 push（未授权）。
+G6 审计轨迹（spec/upgrade-2026-09 ACC-U6-01..04）：新增 `src/agents/audit.py`（JSONL 按天分文件、只追加、保留天数可配、不记正文与 Key），executor/llm/管理操作埋点，`GET /api/audit` 查询接口。push 状态：未 push（未授权）。
+
+---
+
+## G5 切片记录（2026-09-04，控制器续接）
+
+- **验证证据**：`unittest discover` 121/121 OK（G4 后 112 → 新增 test_key_writeback_security 9 用例）；直跑 14/14 退出码 0；compileall 通过；全程离线（密钥文件与任务库/会话库均在 tempfile，绝不读写用户 .env 与 data/runtime.json）。
+- **密钥安全（P0-5）**：
+  - `key_file_permissions_ok(path)`：owner 外任一权限位（组/其他）→ 过宽；文件缺失视为满足。
+  - `load_config()` 启动时调用 `warn_key_file_permissions()`：.env / runtime.json 过宽即告警，提示将拒绝保存新密钥与 chmod 600。
+  - `save_runtime()` 写后自动 `chmod 0600`（新建/覆写均生效）。
+  - `/api/config` 保存新密钥前检查 runtime.json 权限，过宽返回 **403**（提示 chmod 600），普通配置项不受影响；权限收紧后重试放行。
+  - **G2 观察项 3 关闭**：llm.api_key 保存路径去掉 `str()` 强转，与 vision.api_key 统一——int/float 等非字符串进入 validate_config 报类型错误 → 400；掩码回显值（含 `****`）忽略不落盘。
+  - API 响应沿用 `_config_view` 掩码；TaskRecord to_dict/summary 无密钥字段（测试断言）；日志只记键名不记值。
+  - 钥匙串扩展点：config.py 权限段注释已留接口约定（本期不引入依赖）。
+- **任务写回幂等（P0-5）**：
+  - `TaskRecord.writeback_id`（写回成功后置为 task_id 并持久化；from_dict 容错兼容旧文件）。
+  - `WebStore.has_task_writeback(session_id, task_id)`：按 assistant 消息 metrics.task_id 检索；`WebStore.add_task_result(...)`：user+assistant 消息与 query_event 单连接事务原子落库（失败无半写）。
+  - `Handler.persist_task_result`：writeback_id 已置位 → 跳过；库中已有同 task_id 消息（崩溃重放/旧记录升级）→ 只补标识不重复写；成功 → 原子写回 + `_mark_writeback` 持久化。重复回调/重启重放消息只出现一次。
+  - 写回失败：任务保持 completed、答案不回滚、writeback_id 为空（可重试）；恢复后重试成功且不重复。`_notify_complete` 吞异常语义不变。
+- **关键坑**：`from agents.config import RUNTIME_PATH` 是导入期绑定，测试 monkeypatch `config_mod.RUNTIME_PATH` 无效——web_server 改为 `config_mod.RUNTIME_PATH` 模块属性访问。
+- **涉及文件**：src/agents/{config,web_server,web_store,task_store}.py、tests/test_key_writeback_security.py（新增 9 用例）。
 
 ---
 

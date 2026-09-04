@@ -165,6 +165,58 @@ class WebStore:
         with self._connect() as db:
             db.execute("UPDATE sessions SET summary=? WHERE id=?", (summary or "", session_id))
 
+    # ---- 任务写回（P0-5：幂等） ----
+    def has_task_writeback(self, session_id: str, task_id: str) -> bool:
+        """该会话是否已写回过指定任务的结果（按 assistant 消息 metrics.task_id 判断）。
+
+        覆盖「记录 writeback_id 前崩溃 / 回调重放 / 旧记录升级」等场景，
+        与 TaskRecord.writeback_id 双保险，保证重复回调不产生重复消息。
+        """
+        if not session_id or not task_id:
+            return False
+        for message in self.messages(session_id):
+            metrics = message.get("metrics")
+            if (
+                message.get("role") == "assistant"
+                and isinstance(metrics, dict)
+                and metrics.get("task_id") == task_id
+            ):
+                return True
+        return False
+
+    def add_task_result(
+        self, session_id: str, workspace_id: str, question: str, answer: str,
+        sources=None, plan=None, metrics=None,
+    ) -> None:
+        """任务结果原子写回：user + assistant 消息与查询事件在同一连接/事务内落库。
+
+        写回失败时整体不生效（无半写状态），配合 has_task_writeback 可安全重试。
+        """
+        now = self._now()
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO messages(session_id,role,content,sources,plan,metrics,created_at) VALUES (?,?,?,?,?,?,?)",
+                (session_id, "user", question, json.dumps([], ensure_ascii=False),
+                 json.dumps({}, ensure_ascii=False), json.dumps({}, ensure_ascii=False), now),
+            )
+            db.execute(
+                "INSERT INTO messages(session_id,role,content,sources,plan,metrics,created_at) VALUES (?,?,?,?,?,?,?)",
+                (session_id, "assistant", answer, json.dumps(list(sources or []), ensure_ascii=False),
+                 json.dumps(plan or {}, ensure_ascii=False), json.dumps(metrics or {}, ensure_ascii=False), now),
+            )
+            title = question.strip().replace("\n", " ")[:24]
+            if title:
+                db.execute(
+                    "UPDATE sessions SET title=CASE WHEN title='新的会话' THEN ? ELSE title END, updated_at=? WHERE id=?",
+                    (title, now, session_id),
+                )
+            else:
+                db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now, session_id))
+            db.execute(
+                "INSERT INTO query_events(workspace_id,session_id,kb_hit,created_at) VALUES (?,?,?,?)",
+                (workspace_id, session_id, 1 if any(not str(s).startswith("http") for s in (sources or [])) else 0, now),
+            )
+
     def feedback(self, message_id: int, value: str):
         if value not in ("up", "down", ""):
             raise ValueError(value)

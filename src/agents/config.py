@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,11 @@ def _load_runtime(raw: dict) -> dict:
 
 
 def save_runtime(overrides: dict) -> None:
-    """保存运行时配置覆盖（持久化，跨重启生效）。"""
+    """保存运行时配置覆盖（持久化，跨重启生效）。
+
+    P0-5：runtime.json 可能包含 API Key，写后收紧为 0600（owner 读写），
+    防止以默认 0644 落盘导致组/其他用户可读。
+    """
     current: dict = {}
     if RUNTIME_PATH.exists():
         try:
@@ -83,6 +88,46 @@ def save_runtime(overrides: dict) -> None:
     _deep_merge(current, overrides)
     RUNTIME_PATH.parent.mkdir(parents=True, exist_ok=True)
     RUNTIME_PATH.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+    _tighten_key_file_permissions(RUNTIME_PATH)
+
+
+# ================= G5/P0-5 密钥文件权限 =================
+#
+# 约定：.env 与 data/runtime.json 含 API Key，最小权限 = owner 读写（0600），
+# 组/其他用户任何权限位都视为过宽。启动时告警；Web 保存新密钥前检查，
+# 过宽时拒绝保存（不静默收紧——避免掩盖用户环境的共享目录配置）。
+# 后续扩展点：可替换为系统钥匙串（macOS Keychain / Secret Service）读取密钥，
+# 本期不引入新依赖，接口以 ENV/RUNTIME 文件为准。
+
+def key_file_permissions_ok(path: Path) -> bool:
+    """检查密钥文件权限是否满足最小权限；文件不存在视为满足（由存在性逻辑另行处理）。"""
+    try:
+        mode = Path(path).stat().st_mode
+    except OSError:
+        return True
+    return not (mode & (stat.S_IRWXG | stat.S_IRWXO))
+
+
+def _tighten_key_file_permissions(path: Path) -> bool:
+    """尽力收紧密钥文件权限为 0600；失败仅告警不抛错（如跨平台文件系统不支持）。"""
+    try:
+        os.chmod(path, 0o600)
+        return True
+    except OSError as exc:
+        LOG.warning("收紧密钥文件权限失败（%s）: %s", path, exc)
+        return False
+
+
+def warn_key_file_permissions() -> None:
+    """启动时检查 .env / runtime.json 权限，过宽则告警（提示会影响保存新密钥）。"""
+    for path, label in ((ENV_PATH, ".env"), (RUNTIME_PATH, "data/runtime.json")):
+        if not path.exists() or key_file_permissions_ok(path):
+            continue
+        LOG.warning(
+            "%s 权限过宽（组/其他用户可读），存在密钥泄露风险；将拒绝通过设置面板保存新密钥。"
+            "建议执行 chmod 600 %s 收紧权限。",
+            label, path,
+        )
 
 
 # ================= G2 配置校验（P0-4 + spec/upgrade-2026-09「校验规则表」） =================
@@ -639,6 +684,8 @@ def _maybe_log_egress_migration_hint() -> None:
 
 def load_config() -> Config:
     _load_dotenv()
+    # G5/P0-5：启动时检查密钥文件权限，过宽即告警（一次/进程，不影响启动）
+    warn_key_file_permissions()
     raw: dict[str, Any] = {}
     if CONFIG_PATH.exists():
         loaded = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
