@@ -167,6 +167,7 @@ _INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "tasks.total_timeout_s": (1, 86400),
     "tasks.watchdog_interval_s": (1, 3600),
     "planner.fast_path_max_len": (10, 500),
+    "planner.max_search_calls": (1, 10),
     "synthesis.max_tokens": (64, 32768),
 }
 _POSITIVE_INT_KEYS: tuple[str, ...] = ("llm.timeout",)  # 整数且 >0
@@ -707,6 +708,11 @@ class Config:
     def planner_fast_path_max_len(self) -> int:
         """快路径问题长度上限（字符）。"""
         return int(self.get("planner.fast_path_max_len", 60))
+
+    @property
+    def planner_max_search_calls(self) -> int:
+        """检索迭代预算：单次问答最多执行的 KB 检索步数（含反思补步）。G10。"""
+        return int(self.get("planner.max_search_calls", 3))
 
     @property
     def synthesis_max_tokens(self) -> int:

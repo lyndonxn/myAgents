@@ -688,6 +688,9 @@ class Agent:
         反思返回 need_more 且带有效步骤时追加执行（step_id 续号、超出硬上限截断），
         Plan.rounds+1 并记录 reasoning；反思解析失败（LLMError）静默跳过补步。
         tools（G3）：本次问答的工具视图（allow_web 过滤后），缺省用 self.tools。
+        G10：检索迭代预算——已执行的 search_knowledge_base 步数计入
+        planner.max_search_calls（默认 3）预算并注入反思提示；反思提出的新检索
+        步骤超出预算时被硬性剔除（防空转循环），其余类型步骤不受影响。
         """
         if not bool(getattr(self.config, "planner_reflect", True)):
             return
@@ -695,12 +698,15 @@ class Agent:
         if max_reflections <= 0:
             return
         hard_cap = self.config.planner_max_steps * 2  # 追加后总步数硬上限
+        max_search_calls = max(1, int(getattr(self.config, "planner_max_search_calls", 3)))
         tool_descriptions = describe_tools(tools if tools is not None else self.tools)
         for _ in range(max_reflections):
             budget = hard_cap - len(answer.plan.steps)
             if budget <= 0:
                 LOG.info("反思跳过：总步数已达硬上限 %d", hard_cap)
                 break
+            # G10：本次问答已执行的搜索次数（反思补步追加后同样计入）
+            searches_used = sum(1 for s in answer.steps if s.action == "search_knowledge_base")
             answer.llm_calls += 1
             try:
                 reflect_plan = planner.reflect(
@@ -709,6 +715,7 @@ class Agent:
                     history_text,
                     self._trajectory(answer.steps),
                     remaining_budget=budget,
+                    search_budget=(searches_used, max_search_calls),
                 )
             except LLMError as exc:
                 LOG.warning("反思重规划失败，跳过补步: %s", exc)
@@ -717,8 +724,26 @@ class Agent:
                 if verbose and reflect_plan.reasoning:
                     print(f"  [reflect] 无需补步：{reflect_plan.reasoning}")
                 break
+            # G10 硬约束：剔除超出搜索预算的检索补步（其余步骤保留）
+            search_room = max(0, max_search_calls - searches_used)
+            dropped = 0
+            kept_steps: list = []
+            for s in reflect_plan.steps:
+                if s.action == "search_knowledge_base":
+                    if search_room <= 0:
+                        dropped += 1
+                        continue
+                    search_room -= 1
+                kept_steps.append(s)
+            if dropped:
+                LOG.info("反思补步剔除 %d 个超出搜索预算的检索步骤（预算 %d）", dropped, max_search_calls)
+            new_steps = kept_steps
+            if not new_steps:
+                if verbose and reflect_plan.reasoning:
+                    print(f"  [reflect] 补步均为检索但预算已耗尽，跳过：{reflect_plan.reasoning}")
+                break
             # 新步骤 step_id 续号，并按硬上限截断；只执行新增步骤
-            new_steps = reflect_plan.steps[:budget]
+            new_steps = new_steps[:budget]
             base = len(answer.plan.steps)
             for i, s in enumerate(new_steps):
                 s.step_id = base + i + 1

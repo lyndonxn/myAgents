@@ -118,16 +118,38 @@ def build_reflect_prompt(
     history_text: str,
     trajectory: list[dict],
     remaining_budget: int,
+    search_budget: tuple[int, int] | None = None,
 ) -> list[dict]:
-    """构建反思重规划 prompt：轨迹为每步 {step_id, action, ok, error, output 摘要} 列表。"""
+    """构建反思重规划 prompt：轨迹为每步 {step_id, action, ok, error, output 摘要} 列表。
+
+    G10：search_budget=(已用次数, 上限) 时注入检索预算约束——未命中且预算未尽
+    才允许改写 query 再检索，预算耗尽则禁止提出任何检索步骤（防空转循环）。
+    """
     tools_text = "\n".join(f"- {d}" for d in tool_descriptions)
     history_block = f"对话历史：\n{history_text}\n\n" if history_text else ""
     traj_text = json.dumps(trajectory, ensure_ascii=False, default=str)
+    search_block = ""
+    if search_budget is not None:
+        used, cap = search_budget
+        remaining = max(0, int(cap) - int(used))
+        if remaining > 0:
+            search_block = (
+                f"知识库搜索次数：已用 {used} / 上限 {cap}（剩余 {remaining}）。\n"
+                "若知识库检索未命中（hit_count=0）且你判断是查询词不匹配所致，可在补步中"
+                "改写查询词再次检索（action=search_knowledge_base，input.query 必须与已执行的查询明显不同）；"
+                "若判断是知识库本身没有相关内容，不要提出检索补步。\n\n"
+            )
+        else:
+            search_block = (
+                f"知识库搜索次数：已用 {used} / 上限 {cap}，预算已耗尽。\n"
+                "不得再提出任何 search_knowledge_base 检索步骤；如信息不足请直接依据现有轨迹作答。\n\n"
+            )
     user = (
         f"{history_block}"
         f"可用工具：\n{tools_text}\n\n"
         f"用户问题：{question}\n\n"
         f"已执行步骤轨迹（step_id / action / ok / error / 输出摘要）：\n{traj_text}\n\n"
+        f"{search_block}"
         f"补步数量上限：{max(0, remaining_budget)}。\n\n"
         "请输出反思 JSON（need_more / reasoning / steps）。"
     )
@@ -185,16 +207,20 @@ class Planner:
         history_text: str,
         trajectory: list[dict],
         remaining_budget: int,
+        search_budget: tuple[int, int] | None = None,
     ) -> Plan:
         """反思已执行轨迹，判断是否需要补步（S2 ReAct 迭代）。
 
         返回的 Plan 只承载补步步骤（step_id 从 1 临时编号，由调用方续号）；
         need_more=false 或没有有效补步时返回空步骤计划。
+        G10：search_budget=(已用搜索次数, 上限) 注入检索预算约束（prompt 层），
+        硬约束由调用方在追加步骤时强制执行。
         解析失败（坏 JSON 或结构不合法）抛 LLMError，由调用方静默吞掉。
         """
         try:
             messages = build_reflect_prompt(
-                question, tool_descriptions, history_text, trajectory, remaining_budget
+                question, tool_descriptions, history_text, trajectory, remaining_budget,
+                search_budget=search_budget,
             )
             obj = self.llm.chat_json(
                 messages,

@@ -75,7 +75,21 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-G10 检索迭代循环（spec/upgrade-2026-09 ACC-U10-01..03）：检索→评估→按需改写再检索，复用 @step:N 机制，预算 `planner.max_search_calls`（默认 3）防失控。push 状态：未 push（未授权）。
+G11 本地 LLM 离线档位（spec/upgrade-2026-09 ACC-U11）：llm.py 本地后端（Ollama/兼容接口）、config 离线档位、webui 提示；含离线降级路径。push 状态：未 push（未授权）。
+
+---
+
+## G10 切片记录（2026-09-04，控制器续接）
+
+- **验证证据**：`unittest discover` 156/156 OK（G9 后 152 → 新增 test_search_loop 4 用例）；直跑 18/18 退出码 0；compileall 通过；全程离线（脚本化 LLM + 查询感知假 KB 工具）。
+- **实现**（复用 S2 反思机制与 @step:N 占位符，未新增执行路径）：
+  - `build_reflect_prompt/reflect` 新增 `search_budget=(已用, 上限)` 注入：有剩余 → 允许改写 query 再检索（要求 query 与已执行的明显不同；KB 本身无内容则不提检索补步）；耗尽 → 明确禁止任何检索补步。
+  - `_reflect_and_extend`：记账 `searches_used`（含反思补步追加后的搜索）并传预算；硬约束——反思提出的新检索步骤超出 `planner.max_search_calls` 时被剔除（其余类型补步不受影响），剔除计数落日志。
+  - 配置：`planner.max_search_calls` 默认 3（校验 1–10），config.yaml 注释说明。
+- **ACC-U10-01** ✓：首轮未命中 → 反思改写 query 二轮命中，总搜索 2 ≤ 3，来源来自二轮，反思 prompt 含预算。
+- **ACC-U10-02** ✓：预算耗尽 → 反思 prompt 明确禁检 + 硬约束剔除第 4 次检索，合成提示按未命中路径披露。
+- **ACC-U10-03**（难评测集 reward 对比）需付费 LLM 实跑，按规挂起待单独授权；机制已就绪，可在授权后用 `--questions benchmark/questions_hard.json` 实跑对比。
+- **涉及文件**：src/agents/{planner,agent,config}.py、config.yaml、tests/test_search_loop.py（新增 4 用例）。
 
 ---
 
