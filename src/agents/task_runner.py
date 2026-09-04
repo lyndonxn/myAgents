@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 from typing import Callable
 
 from . import audit as audit_mod
@@ -42,6 +43,7 @@ from .task_store import (
     STATUS_RUNNING,
     TaskRecord,
     TaskStore,
+    _now,
 )
 
 LOG = get_logger("task_runner")
@@ -172,12 +174,21 @@ class TaskRunner:
         agent_provider: Callable[[], Agent | None],
         memory_provider: Callable[[str], SessionMemory | None] | None = None,
         on_complete: Callable[[TaskRecord], None] | None = None,
+        step_timeout_s: float = 600.0,
+        total_timeout_s: float = 3600.0,
+        watchdog_interval_s: float = 30.0,
     ):
         self.store = store
         self.lock = lock
         self.agent_provider = agent_provider
         self.memory_provider = memory_provider
         self.on_complete = on_complete
+        # P1-2 看门狗阈值：步骤级（心跳停滞判定卡死）与任务级总时长；watchdog 扫描间隔
+        self.step_timeout_s = max(1.0, float(step_timeout_s))
+        self.total_timeout_s = max(1.0, float(total_timeout_s))
+        self.watchdog_interval_s = max(1.0, float(watchdog_interval_s))
+        self._watchdog: threading.Thread | None = None
+        self._watchdog_stop = threading.Event()
         self._queue: queue.Queue = queue.Queue()
         self._ctrl_lock = threading.Lock()
         self._pause_events: dict[str, threading.Event] = {}
@@ -310,8 +321,73 @@ class TaskRunner:
         if record is not None and record.status in (STATUS_QUEUED, STATUS_RUNNING):
             record.status = STATUS_FAILED
             record.error = error
+            record.last_error_type = error.split(":", 1)[0] if error else "Error"
             self.store.update(record)
         self._cleanup_events(task_id)
+
+    # ---- 看门狗（P1-2） ----
+
+    def _heartbeat(self, record: TaskRecord, current_step: str) -> None:
+        """刷新心跳时间与当前步骤摘要（调用方随后自行 store.update 或由本方法落盘）。"""
+        record.heartbeat_at = _now()
+        record.current_step = str(current_step or "")[:120]
+
+    def start_watchdog(self) -> None:
+        """启动看门狗 daemon 线程：周期扫描把心跳停滞/总超时的 running 任务转为 paused。
+
+        paused 而非 failed：卡死多源于 worker 线程被杀/进程冻结等可恢复场景，
+        用户可 resume 从持久化步骤继续（幂等：已有 paused/终态不会被二次改写）。
+        """
+        if self._watchdog is not None and self._watchdog.is_alive():
+            return
+        self._watchdog_stop.clear()
+        self._watchdog = threading.Thread(target=self._watchdog_loop, name="task-watchdog", daemon=True)
+        self._watchdog.start()
+        LOG.info(
+            "任务看门狗已启动: 间隔 %ss / 步骤超时 %ss / 总超时 %ss",
+            self.watchdog_interval_s, self.step_timeout_s, self.total_timeout_s,
+        )
+
+    def stop_watchdog(self) -> None:
+        """停止看门狗线程（测试与关停用）。"""
+        self._watchdog_stop.set()
+
+    def _watchdog_loop(self) -> None:
+        while not self._watchdog_stop.wait(self.watchdog_interval_s):
+            try:
+                self.sweep_once()
+            except Exception:  # noqa: BLE001 - 看护异常不中断扫描
+                LOG.exception("任务看门狗扫描异常")
+
+    def sweep_once(self) -> list[str]:
+        """单次扫描：返回本次被转为 paused 的任务 id。
+
+        判定口径：running 且 (heartbeat_at 缺失则回退 updated_at) 停滞超过
+        step_timeout_s。同时该任务从创建起超过 total_timeout_s 时也一并收容。
+        """
+        swept: list[str] = []
+        for task_id in self.store.stale_running_ids(self.step_timeout_s):
+            record = self.store.get(task_id)
+            if record is None or record.status != STATUS_RUNNING:
+                continue
+            record.status = STATUS_PAUSED
+            record.error = (
+                f"看门狗：步骤心跳停滞超过 {int(self.step_timeout_s)}s，已暂停可恢复"
+                f"（current_step={record.current_step or '未知'}）"
+            )
+            record.last_error_type = record.last_error_type or "WatchdogStall"
+            self.store.update(record)
+            self._cleanup_events(task_id)
+            swept.append(task_id)
+            LOG.warning("看门狗把卡死任务转为 paused: %s | step=%s", task_id, record.current_step)
+            audit = audit_mod.get()
+            if audit is not None:
+                try:
+                    audit.log_admin("task_watchdog_pause", ok=True, session_id=record.session_id,
+                                    detail=f"task={task_id}")
+                except Exception:  # noqa: BLE001
+                    pass
+        return swept
 
     def _notify_complete(self, record: TaskRecord) -> None:
         """completed 终态（已落盘）后触发 on_complete 回调（T1）。
@@ -362,8 +438,9 @@ class TaskRunner:
             self.store.update(record)
             return
 
-        # 标记 running（ACC-S5-01：执行开始即对外可见）
+        # 标记 running（ACC-S5-01：执行开始即对外可见）+ 心跳起点（P1-2）
         record.status = STATUS_RUNNING
+        self._heartbeat(record, "规划")
         self.store.update(record)
         try:
             self._execute(record, pause_event, cancel_event)
@@ -422,12 +499,20 @@ class TaskRunner:
         done_ok = {sid for sid, r in executor._history.items() if r.ok}
 
         paused = canceled = False
+        paused_reason = ""
+        t_start = time.monotonic()
         for step in plan.steps:
             if cancel_event.is_set():
                 canceled = True
                 break
             if pause_event.is_set():
                 paused = True
+                break
+            # P1-2 任务级总超时：超出后停止推进剩余步骤（转为 paused 可恢复）
+            if (time.monotonic() - t_start) > self.total_timeout_s:
+                paused = True
+                paused_reason = f"任务总超时（>{int(self.total_timeout_s)}s），已暂停可恢复"
+                LOG.warning("任务 %s 触发总超时看护", record.task_id)
                 break
             if step.step_id in done_ok:
                 continue  # 恢复路径：跳过已 ok 步骤（失败步骤重试执行）
@@ -439,10 +524,23 @@ class TaskRunner:
                 if pause_event.is_set():
                     paused = True
                     break
+                # P1-2：外部（watchdog/cancel/pause）已把任务迁出运行口径 → 停止推进且不覆盖状态
+                latest_status = (self.store.get(record.task_id) or record).status
+                if latest_status not in (STATUS_RUNNING, STATUS_QUEUED):
+                    paused = True
+                    paused_reason = f"执行期间任务被外部迁移为 {latest_status}"
+                    break
+                # P1-2 心跳：步骤边界刷新，供 watchdog 判定卡死
+                self._heartbeat(record, f"step {step.step_id}: {step.action}")
                 result = executor._run_step(step.step_id, step, executor._history)
             executor._history[step.step_id] = result
+            if not result.ok:
+                record.last_error_type = str(result.error).split(":", 1)[0] or "ToolError"
+            else:
+                record.last_error_type = ""
             self._append_step(record, step_to_dict(result))
             sync_usage()
+            self._heartbeat(record, f"step {step.step_id} done")  # 步骤完成即随落盘刷新心跳
             self.store.update(record)  # 子任务进度/中间结果/失败节点落盘
 
         # ---- 步骤后/合成前检查点：暂停与取消在合成阶段同样生效 ----
@@ -460,6 +558,8 @@ class TaskRunner:
             return
         if paused:
             record.status = STATUS_PAUSED
+            if paused_reason:
+                record.error = paused_reason
             sync_usage()
             self.store.update(record)
             return  # 保留事件：resume 会清除暂停事件

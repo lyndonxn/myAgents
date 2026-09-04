@@ -81,3 +81,9 @@ audit:
   enabled: true             # 审计总开关：关闭后不写审计事件
   retention_days: 30        # 审计文件保留天数，超期惰性清理
   log_content: false        # 正文记录（问题与答案原文）：默认关闭，显式开启才写入
+
+# 后台任务看门狗（G7/P1-2：任务卡死检测与超时看护）
+tasks:
+  step_timeout_s: 600        # 步骤级超时：心跳停滞超过该秒数的 running 任务被看门狗转 paused
+  total_timeout_s: 3600      # 任务级总超时：执行超过该秒数后不再推进剩余步骤（转 paused 可恢复）
+  watchdog_interval_s: 30    # 看门狗扫描间隔（秒）

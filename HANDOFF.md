@@ -75,7 +75,22 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-第三批 G7 任务 watchdog（P1-2，spec/p0-p1-improvement.md）：任务卡死检测与超时看门狗，`task_runner.py`/`task_store.py`。push 状态：未 push（未授权）。
+第四批 G8 难评测集 + reward 模块（spec/upgrade-2026-09 ACC-U8-01..03）：九类题库、p50/p95 指标、独立 `src/agents/reward.py` 判分；`--retrieval-only` 全程零 LLM 调用。push 状态：未 push（未授权）。
+
+---
+
+## G7 切片记录（2026-09-04，控制器续接）
+
+- **验证证据**：`unittest discover` 135/135 OK（G6 后 128 → 新增 test_task_watchdog 7 用例）；直跑 16/16 退出码 0；compileall 通过；全程离线（tempfile 任务库 + stub agent，mock 时间钟验证总超时）。
+- **P1-2 落实项**：
+  - TaskRecord 新增 `heartbeat_at`/`current_step`/`last_error_type`（from_dict 容错兼容旧文件）；每步骤边界刷新心跳与步骤摘要并随 store.update 落盘；失败步骤记错误类型、成功清空。
+  - watchdog：`TaskRunner.sweep_once()`（running 且心跳停滞 > step_timeout_s → paused，error 含「看门狗」可读原因；活跃任务不误扫）+ `start_watchdog/stop_watchdog` daemon 扫描线程；心跳缺失回退 updated_at（升级兼容）。
+  - 任务级总超时：_execute 步骤循环预检 elapsed > total_timeout_s → 停止推进、转 paused、error 含「总超时」。
+  - 步骤循环新增外部迁移预检：落盘状态非 running/queued → 停止推进且不覆盖状态（watchdog/pause/cancel 与 worker 不互踩）。
+  - 状态机：canceled 不可 resume、非法迁移 ValueError 含当前状态（既有实现，本轮补测试锁定）。
+  - 配置：config.yaml 新增 `tasks.{step_timeout_s:600, total_timeout_s:3600, watchdog_interval_s:30}` + 校验规则 + 设置白名单；web_server.main 装配 start_watchdog。
+- **延期决策（P1-2 剩余项，挂账）**：锁拆分（会话记忆/执行/写回三把锁）与可配置多 worker——当前单 worker + Handler.lock 串行已保证「记忆不串线/问答与任务不并发改记忆」，并行执行收益低且重构风险高；待任务量实测瓶颈后再做。
+- **涉及文件**：src/agents/{task_store,task_runner}.py、config.yaml、src/agents/{config,web_server}.py、tests/test_task_watchdog.py（新增 7 用例）。
 
 ---
 

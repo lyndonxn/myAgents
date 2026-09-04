@@ -19,7 +19,7 @@ import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .logger import get_logger
@@ -62,6 +62,9 @@ class TaskRecord:
     citations_valid: int = 0                        # 引用校验通过数（T2：随答案写回会话展示）
     citations_invalid: int = 0                      # 被剔除的非法引用数
     writeback_id: str = ""                          # P0-5 写回幂等标识：写回成功后置为 task_id（旧文件缺失时兼容为空）
+    heartbeat_at: str = ""                          # P1-2 心跳时间：每步骤边界刷新，供 watchdog 判定卡死
+    current_step: str = ""                          # P1-2 当前步骤摘要（如 "step 2: web_search"）
+    last_error_type: str = ""                       # P1-2 最近一次步骤失败的错误类型（成功步骤清空）
     created_at: str = ""
     updated_at: str = ""
 
@@ -99,6 +102,9 @@ class TaskRecord:
             citations_valid=valid,
             citations_invalid=invalid,
             writeback_id=str(data.get("writeback_id", "")),
+            heartbeat_at=str(data.get("heartbeat_at", "")),
+            current_step=str(data.get("current_step", "")),
+            last_error_type=str(data.get("last_error_type", "")),
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )
@@ -184,6 +190,29 @@ class TaskStore:
         if recovered:
             LOG.info("启动恢复：%d 个未完成任务已转为 paused", len(recovered))
         return recovered
+
+    @staticmethod
+    def _parse_iso(ts: str) -> "datetime | None":
+        try:
+            return datetime.fromisoformat(ts)
+        except (ValueError, TypeError):
+            return None
+
+    def stale_running_ids(self, threshold_s: float) -> list[str]:
+        """P1-2 watchdog：心跳超过阈值未刷新的 running 任务 id 列表。
+
+        心跳空缺（旧记录）时回退用 updated_at 比较，保证升级存量同样被看护。
+        """
+        # 时间戳为 tz-aware ISO（_now 用 astimezone），cutoff 须同样带本地时区
+        cutoff = datetime.now().astimezone() - timedelta(seconds=max(0.0, float(threshold_s)))
+        stale: list[str] = []
+        for record in self.list():
+            if record.status != STATUS_RUNNING:
+                continue
+            ts = self._parse_iso(record.heartbeat_at) or self._parse_iso(record.updated_at)
+            if ts is None or ts < cutoff:
+                stale.append(record.task_id)
+        return stale
 
     # ---- 内部 ----
     def _write(self, record: TaskRecord) -> None:

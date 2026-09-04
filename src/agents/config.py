@@ -163,6 +163,9 @@ _INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "chunking.min_chars": (0, 100000),
     "chunking.max_chars": (0, 100000),
     "audit.retention_days": (1, 3650),
+    "tasks.step_timeout_s": (1, 86400),
+    "tasks.total_timeout_s": (1, 86400),
+    "tasks.watchdog_interval_s": (1, 3600),
 }
 _POSITIVE_INT_KEYS: tuple[str, ...] = ("llm.timeout",)  # 整数且 >0
 # 浮点规则（int 或 float 均可，bool 不算，闭区间）
@@ -673,6 +676,22 @@ class Config:
     def audit_log_content(self) -> bool:
         """是否记录问题与答案正文（P0-5 语义：默认关闭，显式开启才写）。"""
         return bool(self.get("audit.log_content", False))
+
+    # ---- 任务看门狗（G7/P1-2） ----
+    @property
+    def tasks_step_timeout_s(self) -> float:
+        """步骤级超时（秒）：心跳停滞超过该值的 running 任务被看门狗转 paused。"""
+        return float(self.get("tasks.step_timeout_s", 600.0))
+
+    @property
+    def tasks_total_timeout_s(self) -> float:
+        """任务级总超时（秒）：执行超过该值后不再推进剩余步骤。"""
+        return float(self.get("tasks.total_timeout_s", 3600.0))
+
+    @property
+    def tasks_watchdog_interval_s(self) -> float:
+        """看门狗扫描间隔（秒）。"""
+        return float(self.get("tasks.watchdog_interval_s", 30.0))
 
 
 def _maybe_log_egress_migration_hint() -> None:

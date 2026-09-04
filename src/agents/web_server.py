@@ -51,6 +51,7 @@ CONFIG_FIELDS = {
     "retrieval": {"top_k", "rerank", "rerank_candidates", "multi_query", "reranker_model"},
     "vision": {"base_url", "model", "api_key"},
     "audit": {"retention_days", "log_content"},
+    "tasks": {"step_timeout_s", "total_timeout_s", "watchdog_interval_s"},
 }
 MAX_BODY = 10 * 1024 * 1024        # 请求体上限 10MB
 MAX_IMAGE_DATA_URL = 6 * 1024 * 1024  # 图片 data URL 上限 6MB
@@ -1057,7 +1058,12 @@ def main() -> None:
         memory_provider=lambda session_id: Handler.store.memory(session_id),
         # T1：completed 任务把答案写回会话消息（回调在工作线程执行，persist_task_result 自行持锁）
         on_complete=lambda record: Handler.persist_task_result(record),
+        # P1-2 看门狗阈值（config.yaml tasks.*）
+        step_timeout_s=config.tasks_step_timeout_s,
+        total_timeout_s=config.tasks_total_timeout_s,
+        watchdog_interval_s=config.tasks_watchdog_interval_s,
     )
+    Handler.task_runner.start_watchdog()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     Handler.server_ref = server
     Handler.last_heartbeat = time.monotonic()
