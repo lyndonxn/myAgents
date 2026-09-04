@@ -57,10 +57,18 @@ class StepResult:
 
 
 class Executor:
-    def __init__(self, config, tools: dict[str, Tool], ctx: ToolContext):
+    def __init__(self, config, tools: dict[str, Tool], ctx: ToolContext, web_fallback: bool | None = None):
+        """web_fallback（G3）：本次执行序列的 KB→Web 降级许可；None → 按 config.kb_fallback_web。
+
+        Agent.ask 按请求级 allow_web 解析出的生效值传入，实现单次问答粒度的
+        联网强禁/强许；不传（旧调用方）行为与原先完全一致。
+        """
         self.config = config
         self.tools = tools
         self.ctx = ctx
+        self._web_fallback = (
+            bool(getattr(config, "kb_fallback_web", True)) if web_fallback is None else bool(web_fallback)
+        )
         # 跨 execute() 累积的步骤结果（step_id -> StepResult），供后续步骤解析
         # @step:N 占位符；反思补步续接首轮输出。Executor 与一次问答生命周期绑定。
         self._history: dict[int, StepResult] = {}
@@ -113,12 +121,9 @@ class Executor:
                 )
         kb_error = f"{type(last_exc).__name__}: {last_exc}"
 
-        # 3) KB→Web 降级：知识库检索重试耗尽仍失败，且注册表里有启用的 web_search 工具
-        if (
-            step.action == "search_knowledge_base"
-            and "web_search" in self.tools
-            and bool(getattr(self.config, "kb_fallback_web", True))
-        ):
+        # 3) KB→Web 降级：知识库检索重试耗尽仍失败，且本次许可（web_fallback）开启、
+        #    注册表里有 web_search 工具（allow_web=False 时工具清单本就不含它，双保险）
+        if step.action == "search_knowledge_base" and "web_search" in self.tools and self._web_fallback:
             fallback_err = self._try_web_fallback(result, kwargs, max_retries)
             result.latency_s = time.monotonic() - t0
             if fallback_err is None:

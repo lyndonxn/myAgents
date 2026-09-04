@@ -17,7 +17,7 @@ from __future__ import annotations
 import ast
 import datetime as _dt
 import operator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from .logger import get_logger
@@ -231,6 +231,26 @@ def tool_calculator(ctx: ToolContext, expression: str = "") -> dict:
 
 # ---------------- 注册表 ----------------
 
+def web_search_tool() -> Tool:
+    """web_search 工具定义（G3）：供 build_tools 注册与按请求 allow_web 强许路径复用。
+
+    工具本体无状态（执行时经 ToolContext 取 WebSearch 实例），故可独立构建。
+    """
+    return Tool(
+        name="web_search",
+        description="在互联网上搜索给定查询，返回网页标题、URL 与摘要。当知识库中找不到答案、或问题需要最新/时效性信息时使用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索查询，应包含关键术语，尽量具体"},
+                "max_results": {"type": "integer", "description": "返回结果数，默认 5", "minimum": 1, "maximum": 10},
+            },
+            "required": ["query"],
+        },
+        func=tool_web_search,
+    )
+
+
 def build_tools(config, retriever=None, chunks=None, llm=None, web_search=None) -> dict[str, Tool]:
     """按配置构建工具注册表（名字 -> Tool）。"""
     ctx = ToolContext(retriever=retriever, config=config, llm=llm, chunks=chunks, web_search=web_search)
@@ -250,20 +270,7 @@ def build_tools(config, retriever=None, chunks=None, llm=None, web_search=None) 
             },
             func=tool_search_knowledge_base,
         ),
-        "web_search": Tool(
-            name="web_search",
-            description="在互联网上搜索给定查询，返回网页标题、URL 与摘要。当知识库中找不到答案、或问题需要最新/时效性信息时使用。",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "搜索查询，应包含关键术语，尽量具体"},
-                    "max_results": {"type": "integer", "description": "返回结果数，默认 5", "minimum": 1, "maximum": 10},
-                },
-                "required": ["query"],
-            },
-            func=tool_web_search,
-            enabled=flags["web_search"],
-        ),
+        "web_search": replace(web_search_tool(), enabled=flags["web_search"]),
         "list_knowledge_topics": Tool(
             name="list_knowledge_topics",
             description="列出知识库包含哪些主题/笔记，适合探索性提问（如『知识库里有什么』）。",

@@ -111,8 +111,15 @@ def _probe_tool() -> Tool:
 
 
 def _make_agent(td: str, llm: ScriptedLLM, tools: dict[str, Tool], overrides: dict | None = None) -> Agent:
-    """离线 Agent：tmp data_dir、tfidf 记忆后端、不加载真实索引。"""
-    raw = {"data_dir": td, "memory": {"embedding_backend": "tfidf", "max_episodes": 50}, "tools": {"max_retries": 0}}
+    """离线 Agent：tmp data_dir、tfidf 记忆后端、不加载真实索引。
+
+    G3 起 memory.* 默认关闭；本套件测记忆机制本身，故显式开启两个记忆开关
+    （test_agent_switches_disabled 用 overrides 显式关闭覆盖）。
+    """
+    raw = {"data_dir": td,
+           "memory": {"embedding_backend": "tfidf", "max_episodes": 50,
+                      "long_term_enabled": True, "entities_enabled": True},
+           "tools": {"max_retries": 0}}
     for section, values in (overrides or {}).items():
         raw.setdefault(section, {}).update(values)
     agent = Agent(Config(raw), llm=llm, lazy_index=True)
@@ -408,20 +415,20 @@ class LongMemoryTests(unittest.TestCase):
     # ---------------- 配置与 planner 注入 ----------------
 
     def test_config_memory_defaults(self):
-        """memory.* 四个配置项的默认值与覆盖。"""
+        """memory.* 四个配置项的默认值与覆盖（G3/P0-3：两个记忆开关默认关闭）。"""
         cfg = Config({})
-        self.assertIs(cfg.memory_long_term_enabled, True)
-        self.assertIs(cfg.memory_entities_enabled, True)
+        self.assertIs(cfg.memory_long_term_enabled, False)
+        self.assertIs(cfg.memory_entities_enabled, False)
         self.assertEqual(cfg.memory_max_episodes, 200)
         self.assertEqual(cfg.memory_embedding_backend, "auto")
-        cfg2 = Config({"memory": {"long_term_enabled": False, "entities_enabled": False,
+        cfg2 = Config({"memory": {"long_term_enabled": True, "entities_enabled": True,
                                   "max_episodes": 50, "embedding_backend": "tfidf"}})
-        self.assertIs(cfg2.memory_long_term_enabled, False)
-        self.assertIs(cfg2.memory_entities_enabled, False)
+        self.assertIs(cfg2.memory_long_term_enabled, True)
+        self.assertIs(cfg2.memory_entities_enabled, True)
         self.assertEqual(cfg2.memory_max_episodes, 50)
         self.assertEqual(cfg2.memory_embedding_backend, "tfidf")
 
-        print("✓ config memory.* 默认开、默认 200 条、默认 auto，可被 config.yaml 覆盖")
+        print("✓ config memory.* 开关默认关（G3/P0-3）、默认 200 条、默认 auto，可被 config.yaml 覆盖")
 
     def test_planner_prompt_longterm_injection(self):
         """build_planner_prompt 注入 longterm_text 块；为空时不注入。"""

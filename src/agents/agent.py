@@ -13,6 +13,10 @@ ask(question) 返回结构化 Answer：计划、步骤结果、最终答案、�
 记忆体系（S4）：规划前召回跨会话相关历史经验注入规划提示词；成功问答后抽取实体、
 写入长期记忆，并把会话记忆滑出窗口的轮次压缩为摘要。均受 memory.* 开关控制；
 长期记忆与实体记忆仅在提供 session_id 时读写（无会话调用保持原有行为，无额外副作用）。
+数据外发与记忆许可（G3/P0-3）：ask 增加可选 kwargs remember / allow_web（缺省 None →
+按 config 默认值）。allow_web=False 强禁本次联网：规划工具清单剔除 web_search、
+executor 的 KB→Web 降级跳过；allow_web=True 强许（配置为 false 也生效）。
+remember=False 时本次成功问答不写长期记忆、不抽实体。
 任务路径拆解件（S5）：plan_only/finish_task 把 ask 的「规划」「合成+引用校验」拆给
 后台任务运行器复用（暂停/恢复/逐步持久化），ask 本身行为不变。
 """
@@ -40,7 +44,7 @@ from .long_memory import (
 from .memory import SessionMemory
 from .planner import Plan, Planner, rewrite_query
 from .retriever import Retriever
-from .tools import ToolContext, build_tools, describe_tools
+from .tools import ToolContext, build_tools, describe_tools, web_search_tool
 from .vector_store import VectorStore
 
 SYNTHESIS_SYSTEM = """你是知识库问答助手。基于检索到的片段回答用户问题。
@@ -309,10 +313,41 @@ class Agent:
 
     # ================= 问答 =================
 
-    def ask(self, question: str, verbose: bool = False, session_id: str = "") -> Answer:
+    def resolve_allow_web(self, allow_web: bool | None) -> bool:
+        """把请求级联网许可解析为生效值（G3）：None → 按 config.kb_fallback_web，显式值强禁/强许。"""
+        return self.config.kb_fallback_web if allow_web is None else bool(allow_web)
+
+    def _tools_for_run(self, allow_web: bool) -> dict:
+        """按本次问答的联网许可返回工具视图（G3）。
+
+        - allow_web=False：剔除 web_search（规划清单不含、executor 无降级工具，双保险）；
+        - allow_web=True：注册表缺 web_search（如 tools.web_search_enabled=false）时补挂，
+          保证"强许"下 web_search 进入规划清单。
+        仅返回视图副本，不改 self.tools。
+        """
+        tools = dict(self.tools)
+        if allow_web:
+            if "web_search" not in tools and getattr(self, "web_search", None) is not None:
+                tools["web_search"] = web_search_tool()
+            return tools
+        tools.pop("web_search", None)
+        return tools
+
+    def ask(
+        self,
+        question: str,
+        verbose: bool = False,
+        session_id: str = "",
+        remember: bool | None = None,
+        allow_web: bool | None = None,
+    ) -> Answer:
         if not self._index_loaded:
             self.load_index()
         self.ensure_llm()
+
+        # G3：本次问答的联网许可与工具视图（remember/allow_web 缺省 None → 按配置）
+        effective_allow_web = self.resolve_allow_web(allow_web)
+        run_tools = self._tools_for_run(effective_allow_web)
 
         answer = Answer(question=question)
         t0 = time.monotonic()
@@ -335,10 +370,11 @@ class Agent:
                 except Exception as exc:  # noqa: BLE001 - 记忆增强失败不影响问答
                     LOG.warning("长期记忆召回失败，跳过: %s", exc)
 
-            # 1. 规划（规划器能看到历史，从而理解追问；规则要求 search query 独立）
+            # 1. 规划（规划器能看到历史，从而理解追问；规则要求 search query 独立；
+            #    工具清单按本次联网许可过滤——allow_web=False 时不含 web_search）
             planner = Planner(self.config, self.llm)
             answer.plan = planner.plan(
-                question, describe_tools(self.tools), history_text=history_text, longterm_text=longterm_text
+                question, describe_tools(run_tools), history_text=history_text, longterm_text=longterm_text
             )
             answer.llm_calls += 1
             # 退化路径用改写后的独立查询兜底，避免指代词检索失败
@@ -347,19 +383,21 @@ class Agent:
             if verbose:
                 self._log_plan(answer.plan, history=history_text)
 
-            # 2. 执行
-            executor = Executor(self.config, self.tools, self._ctx)
+            # 2. 执行（降级许可随本次 allow_web 传入，配置为 true 的强禁同样生效）
+            executor = Executor(self.config, run_tools, self._ctx, web_fallback=effective_allow_web)
             answer.steps = executor.execute(answer.plan)
             if verbose:
                 for step in answer.steps:
                     print(f"  · {step.display()}")
 
             # 2.5 反思重规划（S2 ReAct 迭代）：执行后让规划器审视轨迹，必要时补步再执行
-            self._reflect_and_extend(answer, planner, executor, question, history_text, verbose=verbose)
+            self._reflect_and_extend(
+                answer, planner, executor, question, history_text, verbose=verbose, tools=run_tools
+            )
 
             # 3. 生成（结合对话历史，保持连贯；全部步骤结束后统一合成一次）
             # 知识库零命中且未联网（用户未同意）→ 追加确定性提示：答「未在知识库内」并询问是否联网
-            kb_miss = self._kb_miss(answer.steps)
+            kb_miss = self._kb_miss(answer.steps, web_allowed=effective_allow_web)
             miss_hint = (
                 "\n\n（系统提示：本次知识库检索未命中任何相关片段，且用户尚未同意联网搜索。"
                 "请按系统规则回答：开头明确「未在知识库内找到相关内容」，"
@@ -395,8 +433,8 @@ class Agent:
             )
             # 4.5 会话记忆增强（S4）：滑出窗口的轮次压缩为摘要（有溢出才触发）
             self.memory.maybe_compress(self.llm)
-            # 4.6 长期记忆与实体记忆（S4）：仅在提供 session_id 时写入
-            self._remember_long_term(question, answer, session_id)
+            # 4.6 长期记忆与实体记忆（S4）：仅在提供 session_id 时写入；remember=False 本次不写
+            self._remember_long_term(question, answer, session_id, remember=remember)
         LOG.info(
             "ask | q=%s | %.1fs | calls=%d | in=%d out=%d | ¥%.4f | %s",
             question[:50].replace("\n", " "), answer.total_latency_s, answer.llm_calls,
@@ -405,12 +443,19 @@ class Agent:
         )
         return answer
 
-    def _remember_long_term(self, question: str, answer: Answer, session_id: str) -> None:
+    def _remember_long_term(
+        self, question: str, answer: Answer, session_id: str, remember: bool | None = None
+    ) -> None:
         """成功问答后的长期记忆写入（S4）：抽取实体并追加一条经验。
 
         仅在提供 session_id 时生效（长期记忆按会话组织，且避免无会话调用产生
         额外 LLM 调用与磁盘写入）；实体抽取失败得到空 dict，仍写入经验本体。
+        G3：remember=False 时本次问答不写长期记忆、不抽实体（请求级许可优先于
+        配置开关）；None/True 维持配置语义（memory.* 开关关闭时本就不建库）。
         """
+        if remember is False:
+            LOG.info("本次问答不写入长期记忆（remember=false）")
+            return
         if not session_id:
             return
         entities: dict[str, str] = {}
@@ -441,11 +486,14 @@ class Agent:
 
     # ================= 任务路径拆解件（S5：仅供 TaskRunner 使用，ask 行为不变） =================
 
-    def plan_only(self, question: str, session_id: str = "") -> tuple[Plan, str, str]:
+    def plan_only(
+        self, question: str, session_id: str = "", allow_web: bool | None = None
+    ) -> tuple[Plan, str, str]:
         """任务路径的规划阶段（S5）：上下文改写 + 长期记忆召回 + 生成计划，不执行步骤。
 
         与 ask 的第 0/0.5/1 阶段逻辑一致（含 fallback 路径的独立查询兜底），
         只读不写：不写会话记忆、不写长期记忆、无其他副作用。
+        G3：allow_web 为本次任务的联网许可（None → 按配置），影响规划工具清单。
         返回 (plan, q_work, history_text)——history_text 供合成阶段复用。
         """
         if not self._index_loaded:
@@ -470,7 +518,10 @@ class Agent:
 
         planner = Planner(self.config, self.llm)
         plan = planner.plan(
-            question, describe_tools(self.tools), history_text=history_text, longterm_text=longterm_text
+            question,
+            describe_tools(self._tools_for_run(self.resolve_allow_web(allow_web))),
+            history_text=history_text,
+            longterm_text=longterm_text,
         )
         # 退化路径用改写后的独立查询兜底（与 ask 一致）
         if plan.fallback and q_work != question and plan.steps:
@@ -527,6 +578,7 @@ class Agent:
         question: str,
         history_text: str,
         verbose: bool = False,
+        tools: dict | None = None,
     ) -> None:
         """首轮执行后的反思重规划（S2 ReAct 迭代）。
 
@@ -535,6 +587,7 @@ class Agent:
         planner.max_reflections 轮数与总步数硬上限 planner.max_steps*2 约束。
         反思返回 need_more 且带有效步骤时追加执行（step_id 续号、超出硬上限截断），
         Plan.rounds+1 并记录 reasoning；反思解析失败（LLMError）静默跳过补步。
+        tools（G3）：本次问答的工具视图（allow_web 过滤后），缺省用 self.tools。
         """
         if not bool(getattr(self.config, "planner_reflect", True)):
             return
@@ -542,7 +595,7 @@ class Agent:
         if max_reflections <= 0:
             return
         hard_cap = self.config.planner_max_steps * 2  # 追加后总步数硬上限
-        tool_descriptions = describe_tools(self.tools)
+        tool_descriptions = describe_tools(tools if tools is not None else self.tools)
         for _ in range(max_reflections):
             budget = hard_cap - len(answer.plan.steps)
             if budget <= 0:
@@ -615,16 +668,18 @@ class Agent:
         return result.text
 
     @staticmethod
-    def _kb_miss(steps: list[StepResult]) -> bool:
+    def _kb_miss(steps: list[StepResult], web_allowed: bool = True) -> bool:
         """知识库未命中判定（供「未在知识库内 + 询问是否联网」行为）：
         没有 hit_count>0 的成功 KB 检索步骤，也没有成功的 web_search 步骤
-        （用户已同意联网时不提示，按联网结果作答）。"""
+        （用户已同意联网时不提示，按联网结果作答）。
+        G3：web_allowed=False（本次联网被禁）时按"未联网"口径——即使存在
+        web_search 步骤（理论不可达，防御性兜底）也视为未联网。"""
         kb_hit = any(
             s.ok and s.action == "search_knowledge_base"
             and isinstance(s.output, dict) and s.output.get("hit_count")
             for s in steps
         )
-        web_used = any(s.ok and s.action == "web_search" for s in steps)
+        web_used = bool(web_allowed) and any(s.ok and s.action == "web_search" for s in steps)
         return not kb_hit and not web_used
 
     def _collect_sources(self, steps: list[StepResult]) -> list[str]:

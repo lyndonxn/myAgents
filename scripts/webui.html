@@ -702,7 +702,7 @@ body{
         </div>
         <div class="composer-note">
           <span>支持截图以图搜库 · 回答均附引用来源</span>
-          <span class="webtag">知识库未命中时将自动联网检索</span>
+          <span class="webtag">默认不联网；知识库未命中时会先询问是否联网检索</span>
         </div>
       </div>
     </div>
@@ -780,6 +780,7 @@ body{
     <div class="settings-grid settings-page" id="retrievalPage">
       <div class="field wide"><label>检索模式</label><select id="cfgRetrievalPreset"><option value="balanced">均衡（推荐）</option><option value="fast">快速</option><option value="deep">深度</option><option value="custom">自定义</option></select></div>
       <div class="settings-hint">均衡模式适合大多数知识库；快速模式响应更快；深度模式召回更多内容。</div>
+      <div class="settings-hint">数据外发与记忆（默认关闭）：联网降级开启后问题可能发送到互联网；长期记忆与实体记忆数据保存到本机 data/。开启对应开关即恢复自动降级与跨会话记忆。</div>
       <details class="advanced-settings"><summary>高级检索设置</summary><div class="advanced-grid">
         <div class="field"><label>召回数量</label><input id="cfgTopK" type="number" min="1" max="15"></div>
         <div class="field"><label>重排方式</label><select id="cfgRerank"><option value="auto">自动</option><option value="cross_encoder">本地精排</option><option value="llm">模型精排</option><option value="off">关闭</option></select></div>
@@ -811,7 +812,7 @@ body{
 /* ================= DATA ================= */
 const INTRO = {
   role:'agent',
-  html:`<div class="lead">你好，我是 MYAGENTS 知识库问答助手（<b>RAG + 规划层 + 工具层</b>）。<br>可以直接询问知识库内的内容（RAG / MCP / Agent 面试题等），支持连续追问；<br>知识库未命中的问题将自动切换联网检索，所有回答均附引用来源。</div>`
+  html:`<div class="lead">你好，我是 MYAGENTS 知识库问答助手（<b>RAG + 规划层 + 工具层</b>）。<br>可以直接询问知识库内的内容（RAG / MCP / Agent 面试题等），支持连续追问；<br>默认只在知识库内检索，未命中时会先询问是否联网，所有回答均附引用来源。</div>`
 };
 
 const FLOW_RAG = [
@@ -1017,8 +1018,9 @@ function liveAnswerHTML(m){
   const planHtml=(plan.steps||[]).length?`<div class="block note"><b>${esc(plan.summary||'执行轨迹')}</b><br>${plan.steps.map(s=>`${s.ok?'✓':'×'} ${esc(s.action)}`).join(' · ')}</div>`:'';
   const citeInvalid=Number(metrics.citations_invalid||0),citeValid=Number(metrics.citations_valid||0);
   const citeLine=citeInvalid>0?`<div class="block cite-warn">引用校验：剔除 ${citeInvalid} 个无效引用</div>`:(citeValid>0?`<div class="block cite-ok">引用校验 通过</div>`:'');
+  const webState=metrics.degraded?'<div class="block cite-warn">本回答来自 Web 搜索降级</div>':(metrics.web_used?'<div class="block cite-warn">本回答使用了 Web 搜索</div>':'');
   const foot=sources.length?`<div class="block src-foot"><div class="src-chips">${sources.map((s,i)=>`<span class="src-chip"><span class="sc-n">0${i+1}</span><span>${esc(s.name)}</span></span>`).join('')}</div></div>`:'';
-  return bar+head+citeLine+`<div class="block lead">${renderMd(m.answer||'',m.messageId?'id:'+m.messageId:'stream')}</div>`+planHtml+foot;
+  return bar+head+citeLine+webState+`<div class="block lead">${renderMd(m.answer||'',m.messageId?'id:'+m.messageId:'stream')}</div>`+planHtml+foot;
 }
 function answerCardHTML(key){
   const a = ANSWERS[key];
@@ -1415,6 +1417,7 @@ async function deleteSession(id){
 }
 async function resetSession(){
   if(busy) return;
+  if(!confirm('确定清空当前会话的对话记录吗？可同时删除该会话长期记忆，删除后无法恢复。'))return;
   try{await fetch('/api/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:currentSession})});}catch(_error){}
   const s = SESSIONS.find(x=>x.id===currentSession);
   if(s)s.messages = [INTRO];

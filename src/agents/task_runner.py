@@ -181,18 +181,35 @@ class TaskRunner:
         self._ctrl_lock = threading.Lock()
         self._pause_events: dict[str, threading.Event] = {}
         self._cancel_events: dict[str, threading.Event] = {}
+        # G3：按 task_id 挂本次任务的联网/记忆许可（submit 透传，不新增任务记录字段；
+        # 终态清理。进程重启后丢失——恢复路径按持久化计划执行，不再重新规划）
+        self._egress: dict[str, dict] = {}
         self._worker = threading.Thread(target=self._loop, name="task-runner", daemon=True)
         self._worker.start()
 
     # ---- 外部 API ----
 
-    def submit(self, session_id: str, workspace_id: str, question: str) -> str:
-        """提交任务：以 queued 落盘并入队，返回 task_id。"""
+    def submit(
+        self,
+        session_id: str,
+        workspace_id: str,
+        question: str,
+        remember: bool | None = None,
+        allow_web: bool | None = None,
+    ) -> str:
+        """提交任务：以 queued 落盘并入队，返回 task_id。
+
+        G3：remember/allow_web 为本次任务的请求级外发许可（缺省 None → 按配置），
+        仅在运行器内存侧按 task_id 透传到规划与执行阶段：
+        - allow_web → plan_only 的规划工具清单 + Executor 的 KB→Web 降级许可；
+        - remember 透传保存（任务路径本身不写长期记忆，供记忆治理切片对接）。
+        """
         record = TaskRecord(session_id=session_id, workspace_id=workspace_id, question=question, status=STATUS_QUEUED)
         task_id = self.store.create(record)
         with self._ctrl_lock:
             self._pause_events[task_id] = threading.Event()
             self._cancel_events[task_id] = threading.Event()
+            self._egress[task_id] = {"remember": remember, "allow_web": allow_web}
         self._queue.put(task_id)
         LOG.info("任务已提交: %s | q=%s", task_id, question[:60].replace("\n", " "))
         return task_id
@@ -262,6 +279,7 @@ class TaskRunner:
         with self._ctrl_lock:
             self._pause_events.pop(task_id, None)
             self._cancel_events.pop(task_id, None)
+            self._egress.pop(task_id, None)
 
     def _require(self, task_id: str, allow: tuple[str, ...]) -> TaskRecord:
         """读取任务并校验状态是否允许该操作：不存在抛 KeyError，状态不符抛 ValueError。"""
@@ -360,6 +378,9 @@ class TaskRunner:
         agent = self.agent_provider()
         if agent is None:
             raise RuntimeError("Agent 不可用")
+        # G3：本次任务的请求级联网许可（submit 透传；None → 按配置）
+        allow_web_flag = (self._egress.get(record.task_id) or {}).get("allow_web")
+        effective_allow_web = agent.resolve_allow_web(allow_web_flag)
 
         # 用量基线：任务增量 = 结束时 − 开始时（Agent 计数器跨调用累计）
         base_agent = (agent.prompt_tokens, agent.completion_tokens, agent.estimated_cost)
@@ -384,12 +405,14 @@ class TaskRunner:
                 plan = plan_from_dict(record.plan)
                 history_text = agent.memory.as_text()
             else:
-                plan, _q_work, history_text = agent.plan_only(record.question, record.session_id)
+                plan, _q_work, history_text = agent.plan_only(
+                    record.question, record.session_id, allow_web=allow_web_flag
+                )
                 record.plan = plan_to_dict(plan)
                 self.store.update(record)  # 计划先于步骤落盘，崩溃后可恢复
 
         # ---- 阶段 2：逐步执行（每步完成即持久化；步间检查暂停/取消） ----
-        executor = Executor(agent.config, agent.tools, agent._ctx)
+        executor = Executor(agent.config, agent.tools, agent._ctx, web_fallback=effective_allow_web)
         for step_dict in record.steps:
             restored = step_from_dict(step_dict)
             executor._history[restored.step_id] = restored  # 保留 @step:N 占位符引用能力

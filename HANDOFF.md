@@ -59,6 +59,7 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 | --- | --- | --- | --- |
 | G1 | 测试入口标准化（P0-1）：10 个 plain-script 套件 → unittest 可发现，76 用例；直跑兼容保留；统一入口写入 AGENTS.md | 独立验收 ACCEPTED（ACC-P0-1-a..f 全过） | bcb8121(spec) + cfee0d7(tests+AGENTS) |
 | G2 | 配置校验（P0-4）：validate_config/ConfigError/normalize_config 落地规则表；load_config 失败抛错不静默启动；POST /api/config 无效值 400（errors 列表，不回显 Key）；归一化布尔字符串与枚举 | 独立验收 ACCEPTED（ACC-P0-4-a..f 全过，含用户 runtime.json 逐字节不变取证） | 85957d5（含 spec 规则表） |
+| G3 | 数据外发默认关闭 + 回答状态披露（P0-3 + ACC-U3-01..03）：三开关（kb_fallback_web/long_term_enabled/entities_enabled）默认 false；`ask(remember=, allow_web=)` 请求级许可（None→按配置，False 强禁，True 强许）；runtime.json 显式值优先 + 迁移提示一次/进程；`metrics.degraded/web_used` 透出 /api/ask、任务写回与任务详情；webui 答案卡片状态行 + 设置页外发说明 + 清空会话确认 | 控制器验证全过（15 用例 G3 套件 + 全量 103/103） | 见本次提交 |
 
 验证证据：`unittest discover` 76/76 OK（改造前 0）；直跑 10/10 退出码 0；失败路径非 0（/tmp 验证）；离线（fake LLM/桩，data/ 用户库零写入）；六类覆盖映射完整。
 
@@ -73,4 +74,16 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-G3 数据外发默认关闭 + 回答状态披露（P0-3 + ACC-U3-01..03）：三开关默认 false、`allow_web`/`remember` 字段、runtime.json 迁移策略、degraded/外发标记透出 payload 与答案卡片；与 G4 记忆治理共用设置页改动面。push 状态：未 push（未授权）。
+G4 记忆治理（P0-2）：长期记忆淘汰/过期策略、记忆导出与删除入口、与 G3 共用的设置页改动面收尾。push 状态：未 push（未授权）。
+
+---
+
+## G3 切片记录（2026-09-04，控制器续接 zcode 会话完成）
+
+- **验证证据**：`unittest discover` 103/103 OK（G2 后 88 → 新增 test_egress_defaults 15 用例）；直跑 12/12 退出码 0；`compileall` 全仓通过；全程离线（ScriptedLLM 假客户端 + monkeypatch 临时目录，绝不读写用户 data/runtime.json 与 .env）。
+- **ACC-U3-01** ✓：降级步骤 → `/api/ask` 响应 `metrics.degraded==true`，旧键（latency_s/llm_calls/tokens/cost_yuan/citations_*）齐全。
+- **ACC-U3-02** ✓：webui.html 答案卡片含「本回答来自 Web 搜索降级」/「本回答使用了 Web 搜索」状态行，渲染条件 `metrics.degraded`（优先）/`metrics.web_used`（次之），皆 false 不渲染。
+- **ACC-U3-03** ✓：`_egress_flags` 统一口径（StepResult 与持久化步骤 dict 双支持）落任务写回与任务详情；`remember=false` 时零长期记忆写入、零实体抽取 LLM 调用。
+- **关键实现**：`Agent.resolve_allow_web/_tools_for_run`（工具视图副本，强禁剔除 web_search 双保险：规划清单 + executor 降级门控）；`Agent._kb_miss(steps, web_allowed)`（禁网口径视为未联网）；`parse_opt_bool`（字符串布尔归一化，非法值 400）；`config._maybe_log_egress_migration_hint`（存量 runtime.json 未显式设置时 INFO 提示一次/进程）。
+- **兼容策略**：runtime.json 显式配置优先、不强制覆盖；`Agent.ask()` 缺省参数下签名向后兼容（verbose/session_id 不变，新参均可选）。
+- **涉及文件**：config.yaml（三开关翻转+注释）、src/agents/{config,agent,executor,task_runner,tools,web_server}.py、scripts/webui.html、tests/{test_egress_defaults(新),test_long_memory,test_task_runner,test_tool_hardening}.py。

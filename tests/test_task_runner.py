@@ -634,9 +634,12 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(
             set(metrics),
             {"latency_s", "llm_calls", "prompt_tokens", "completion_tokens",
-             "cost_yuan", "citations_valid", "citations_invalid"},
+             "cost_yuan", "citations_valid", "citations_invalid",
+             "degraded", "web_used"},  # G3/ACC-U3-01：新增外发标记两键，旧键不变
             "旧 metrics 键一个不少",
         )
+        self.assertIs(metrics["degraded"], False)   # G3：无降级步骤 → False
+        self.assertIs(metrics["web_used"], False)   # G3：无 web_search 步骤 → False
         self.assertEqual(metrics["latency_s"], 1.2)
         self.assertEqual(metrics["llm_calls"], 2)
         self.assertEqual(metrics["prompt_tokens"], 11)

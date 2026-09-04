@@ -135,7 +135,7 @@ class ToolHardeningTests(unittest.TestCase):
                 {"query": {"type": "string"}}, ["query"],
             ),
         }
-        executor = _make_executor(tools)  # kb_fallback_web 默认 True
+        executor = _make_executor(tools, {"tools": {"kb_fallback_web": True}})  # G3 起默认关，显式开启验证降级路径
         step = PlanStep(action="search_knowledge_base", input={"query": "RAG 是什么"}, step_id=1)
         result = executor._run_step(1, step)
 
@@ -167,9 +167,11 @@ class ToolHardeningTests(unittest.TestCase):
         self.assertIn("RuntimeError: KB 挂了", result.error)
         self.assertNotIn("[降级]", str(result.output))
 
-        # 2) 降级也失败：error 同时含 KB 错误与 Web 降级错误
+        # 2) 降级也失败：error 同时含 KB 错误与 Web 降级错误（显式开启降级开关）
         web = _make_tool("web_search", broken_web, {"query": {"type": "string"}}, ["query"])
-        executor2 = _make_executor({"search_knowledge_base": kb, "web_search": web})
+        executor2 = _make_executor(
+            {"search_knowledge_base": kb, "web_search": web}, {"tools": {"kb_fallback_web": True}},
+        )
         result2 = executor2._run_step(1, PlanStep(action="search_knowledge_base", input={"query": "q"}, step_id=1))
         self.assertFalse(result2.ok)
         self.assertFalse(result2.degraded)

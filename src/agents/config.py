@@ -12,10 +12,24 @@ from typing import Any
 
 import yaml
 
+from .logger import get_logger
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 ENV_PATH = PROJECT_ROOT / ".env"
 RUNTIME_PATH = PROJECT_ROOT / "data" / "runtime.json"
+
+LOG = get_logger("config")
+
+# G3/P0-3 数据外发默认关闭：这三个开关控制"数据是否外发（联网检索）或持久化（长期/实体记忆）"，
+# 默认全部 false，用户在 UI 或 runtime.json 显式开启后才启用。
+_EGRESS_DEFAULT_KEYS: tuple[str, ...] = (
+    "tools.kb_fallback_web",
+    "memory.long_term_enabled",
+    "memory.entities_enabled",
+)
+# 迁移提示只提示一次/进程（load_config 可能被多次调用）
+_migration_hint_shown = False
 
 
 def _load_dotenv(path: Path | None = None) -> None:
@@ -555,19 +569,19 @@ class Config:
 
     @property
     def kb_fallback_web(self) -> bool:
-        """知识库检索重试耗尽仍失败时，是否降级用 Web 搜索。"""
-        return bool(self.get("tools.kb_fallback_web", True))
+        """知识库检索重试耗尽仍失败时，是否降级用 Web 搜索（P0-3：默认关闭）。"""
+        return bool(self.get("tools.kb_fallback_web", False))
 
     # ---- 记忆体系（S4：长期记忆 + 实体记忆 + 会话摘要压缩） ----
     @property
     def memory_long_term_enabled(self) -> bool:
-        """是否启用跨会话长期记忆（成功问答写入经验，规划时召回相关历史）。"""
-        return bool(self.get("memory.long_term_enabled", True))
+        """是否启用跨会话长期记忆（成功问答写入经验，规划时召回相关历史）。P0-3：默认关闭。"""
+        return bool(self.get("memory.long_term_enabled", False))
 
     @property
     def memory_entities_enabled(self) -> bool:
-        """是否启用实体记忆（从问答中抽取关键实体及其事实）。"""
-        return bool(self.get("memory.entities_enabled", True))
+        """是否启用实体记忆（从问答中抽取关键实体及其事实）。P0-3：默认关闭。"""
+        return bool(self.get("memory.entities_enabled", False))
 
     @property
     def memory_max_episodes(self) -> int:
@@ -597,6 +611,32 @@ class Config:
         return float(self.get("tools.web_search.cache_ttl", 300.0))
 
 
+def _maybe_log_egress_migration_hint() -> None:
+    """G3/P0-3 迁移提示：runtime.json 存在但未显式设置外发开关时，提示默认行为已变更。
+
+    兼容策略（P0-3）：runtime.json 显式配置优先、不强制覆盖；但存量用户的 runtime.json
+    由设置面板写入、通常不含这三个键——默认值翻转会实际改变其行为，故提示一次/进程。
+    """
+    global _migration_hint_shown
+    if _migration_hint_shown or not RUNTIME_PATH.exists():
+        return
+    try:
+        rt = json.loads(RUNTIME_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(rt, dict):
+        return
+    missing = [key for key in _EGRESS_DEFAULT_KEYS if _get_path(rt, key) is _MISSING]
+    if not missing:
+        return
+    _migration_hint_shown = True
+    LOG.info(
+        "默认行为已变更：联网降级与长期记忆默认关闭（%s 未显式设置，本次起按默认关闭执行）。"
+        "如需保持原行为，请在设置面板或 data/runtime.json 中显式开启对应开关。",
+        "、".join(missing),
+    )
+
+
 def load_config() -> Config:
     _load_dotenv()
     raw: dict[str, Any] = {}
@@ -606,6 +646,8 @@ def load_config() -> Config:
             raw = _deep_merge(raw, loaded)
     # 运行时覆盖（Web 设置面板写入）
     raw = _load_runtime(raw)
+    # G3：存量 runtime.json 未显式设置外发开关时，提示默认行为已变更（只提示一次/进程）
+    _maybe_log_egress_migration_hint()
     # 环境变量覆盖
     if os.environ.get("DEEPSEEK_API_KEY"):
         raw.setdefault("llm", {})["api_key_env"] = "DEEPSEEK_API_KEY"

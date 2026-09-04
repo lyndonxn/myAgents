@@ -64,6 +64,46 @@ def mask_key(key: str) -> str:
     return key[:3] + "****" + key[-4:]
 
 
+def parse_opt_bool(value) -> tuple[bool | None, str | None]:
+    """解析可选布尔请求字段（G3：allow_web / remember）。
+
+    缺省/None → (None, None) 表示"用配置默认"；bool 原样接受；字符串
+    true/false/1/0/yes/no（大小写不敏感）归一化为真布尔；其他类型/取值返回
+    错误消息（调用方回 400），避免静默吞掉非法输入改变外发语义。
+    """
+    if value is None:
+        return None, None
+    if isinstance(value, bool):
+        return value, None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes"):
+            return True, None
+        if lowered in ("false", "0", "no"):
+            return False, None
+    return None, "须为布尔值（true/false）"
+
+
+def _egress_flags(steps: list) -> dict:
+    """外发标记（G3/ACC-U3-03）：degraded=任一步 KB→Web 降级；web_used=存在 ok 的 web_search 步骤。
+
+    steps 元素可为 StepResult（内存问答路径）或持久化步骤 dict（任务记录路径），
+    供 _answer_payload、任务写回与任务详情共用同一口径。
+    """
+    degraded = False
+    web_used = False
+    for step in steps or []:
+        if isinstance(step, dict):
+            degraded = degraded or bool(step.get("degraded"))
+            web_used = web_used or (step.get("action") == "web_search" and bool(step.get("ok")))
+        else:
+            degraded = degraded or bool(getattr(step, "degraded", False))
+            web_used = web_used or (
+                getattr(step, "action", "") == "web_search" and bool(getattr(step, "ok", False))
+            )
+    return {"degraded": degraded, "web_used": web_used}
+
+
 def _task_latency_s(record) -> float | None:
     """后台任务耗时（秒）：updated_at − created_at（秒级精度，含排队/暂停时长）。
 
@@ -144,6 +184,8 @@ class Handler(BaseHTTPRequestHandler):
                 # S3 引用校验计数（T1 透出）：旧 answer 对象缺失时按 0 处理
                 "citations_valid": getattr(answer, "citations_valid", 0),
                 "citations_invalid": getattr(answer, "citations_invalid", 0),
+                # G3 状态披露（ACC-U3-01）：degraded=任一步 KB→Web 降级；web_used=发生了 web_search 外发
+                **_egress_flags(answer.steps),
             },
         }
 
@@ -195,6 +237,8 @@ class Handler(BaseHTTPRequestHandler):
         metrics["citations_valid"] = int(getattr(record, "citations_valid", 0) or 0)
         metrics["citations_invalid"] = int(getattr(record, "citations_invalid", 0) or 0)
         metrics["cost_yuan"] = round(float(usage.get("cost_yuan", 0.0)), 4)
+        # G3 状态披露：任务写回消息同样带外发标记（与 /api/ask 的 metrics 口径一致）
+        metrics.update(_egress_flags(record.steps))
         with cls.lock:
             store.add_message(record.session_id, "user", record.question)
             store.add_message(
@@ -292,14 +336,16 @@ class Handler(BaseHTTPRequestHandler):
             records = self.task_runner.store.list() if self.task_runner else []
             self._send_json({"tasks": [r.summary() for r in records]})
             return
-        # S5 任务详情：完整 record JSON
+        # S5 任务详情：完整 record JSON（G3：附 degraded/web_used 外发标记 metrics）
         if self.path.startswith("/api/tasks/"):
             task_id = self.path[len("/api/tasks/"):].strip("/")
             record = self.task_runner.store.get(task_id) if self.task_runner else None
             if record is None:
                 self._send_json({"error": "任务不存在"}, 404)
             else:
-                self._send_json(record.to_dict())
+                detail = record.to_dict()
+                detail["metrics"] = _egress_flags(record.steps)
+                self._send_json(detail)
             return
         if self.path == "/api/config":
             self._send_json(self._config_view())
@@ -405,6 +451,12 @@ class Handler(BaseHTTPRequestHandler):
             if not question:
                 self._send_json({"error": "问题不能为空"}, 400)
                 return
+            # G3 可选字段：本次问答的联网许可与记忆许可（缺省 None → 按配置）
+            allow_web, web_err = parse_opt_bool(payload.get("allow_web"))
+            remember, mem_err = parse_opt_bool(payload.get("remember"))
+            if web_err or mem_err:
+                self._send_json({"error": f"{'allow_web' if web_err else 'remember'} {web_err or mem_err}"}, 400)
+                return
             if not self.agent.config.llm_api_key:
                 self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
                 return
@@ -416,7 +468,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with self.lock:  # 串行化问答，保护共享 Agent 与会话记忆
                 self.agent.memory = self.store.memory(session_id)
-                answer = self.agent.ask(question, session_id=session_id)  # S4：长期记忆按会话读写
+                answer = self.agent.ask(  # S4：长期记忆按会话读写；G3：remember/allow_web 请求级许可
+                    question, session_id=session_id, remember=remember, allow_web=allow_web
+                )
             LOG.info("问答 | q=%s | %ds | tokens in=%d out=%d | err=%s",
                      question[:60], round(answer.total_latency_s, 1),
                      answer.prompt_tokens, answer.completion_tokens, answer.error or "-")
@@ -432,6 +486,12 @@ class Handler(BaseHTTPRequestHandler):
             session_id = str(payload.get("session_id", "")).strip()
             if not question:
                 self._send_json({"error": "问题不能为空"}, 400)
+                return
+            # G3 可选字段：与 /api/ask 同口径（缺省 None → 按配置）
+            allow_web, web_err = parse_opt_bool(payload.get("allow_web"))
+            remember, mem_err = parse_opt_bool(payload.get("remember"))
+            if web_err or mem_err:
+                self._send_json({"error": f"{'allow_web' if web_err else 'remember'} {web_err or mem_err}"}, 400)
                 return
             if not self.agent.config.llm_api_key:
                 self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
@@ -454,7 +514,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 with self.lock:
                     self.agent.memory = self.store.memory(session_id)
-                    answer = self.agent.ask(question, session_id=session_id)  # S4：长期记忆按会话读写
+                    answer = self.agent.ask(  # S4：长期记忆按会话读写；G3：remember/allow_web 请求级许可
+                        question, session_id=session_id, remember=remember, allow_web=allow_web
+                    )
                 response = self._persist_answer(session_id, workspace["id"], question, answer)
                 emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], plan=response["plan"], metrics=response["metrics"])
                 text = response["answer"]
@@ -522,6 +584,12 @@ class Handler(BaseHTTPRequestHandler):
             if not question:
                 self._send_json({"error": "问题不能为空"}, 400)
                 return
+            # G3 可选字段：本次任务的联网/记忆许可透传给执行（缺省 None → 按配置）
+            allow_web, web_err = parse_opt_bool(payload.get("allow_web"))
+            remember, mem_err = parse_opt_bool(payload.get("remember"))
+            if web_err or mem_err:
+                self._send_json({"error": f"{'allow_web' if web_err else 'remember'} {web_err or mem_err}"}, 400)
+                return
             if not self.agent.config.llm_api_key:
                 self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
                 return
@@ -531,7 +599,9 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, 409)
                 return
-            task_id = self.task_runner.submit(session_id, workspace["id"], question)
+            task_id = self.task_runner.submit(
+                session_id, workspace["id"], question, remember=remember, allow_web=allow_web
+            )
             LOG.info("任务已创建: %s | q=%s", task_id, question[:60])
             self._send_json({"ok": True, "task_id": task_id, "status": "queued"})
             return
