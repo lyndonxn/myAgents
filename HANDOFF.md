@@ -75,7 +75,20 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-第四批 G8 难评测集 + reward 模块（spec/upgrade-2026-09 ACC-U8-01..03）：九类题库、p50/p95 指标、独立 `src/agents/reward.py` 判分；`--retrieval-only` 全程零 LLM 调用。push 状态：未 push（未授权）。
+G9 速度与成本包（spec/upgrade-2026-09 ACC-U9-01..03）：快路径（简单事实题跳过 planner）、合成 max_tokens 收紧、prompt 重排（缓存友好）、句子级证据压缩（目标输入 token 降 ≥30%）；付费 benchmark 实跑（ACC-U9-03）需单独授权。push 状态：未 push（未授权）。
+
+---
+
+## G8 切片记录（2026-09-04，控制器续接）
+
+- **验证证据**：`unittest discover` 143/143 OK（G7 后 135 → 新增 test_reward 8 用例）；直跑 17/17 退出码 0；compileall（src+benchmark）通过；全程零 LLM（reward 纯离线判分、检索跑 samples/kb 内存索引）。
+- **reward 模块**（新增 `src/agents/reward.py`，benchmark 与离线档位共用）：
+  - `score_case(question, answer, sources, expectations) -> RewardResult(score, failure_type, detail)`；十类题型口径：fact/paraphrase/multi_hop/tool_choice/long_context/memory（关键词+来源比例）、refusal/offline（`refusal` 期望：确定性拒答措辞得分、编造带来源答案记 `fabricated` 扣 0 分——ACC-U8-02）、injection（出现 `forbidden_keywords` 即 `injection_followed`）、conflict（关键词命中但非权威来源 → `stale_source` 0.3）。
+  - `percentile(values, p)`（线性插值 p50/p95）；`summarize_by_category(results)`（分题型 count/avg_score/pass_rate/p50/p95/失败类型分布 + 总 `refusal_accuracy`）；`refusal_like`。
+- **难评测题库**（新增 `benchmark/questions_hard.json`，100 题 = 10 类 × 10 题）：fact/paraphrase/multi_hop/tool_choice/long_context 五类检索可验证（指向 samples/kb 文档与章节）；refusal/conflict/injection/memory/offline 五类行为题（reward 字段：refusal/forbidden_keywords 等）。
+- **run_benchmark.py 接入**：`run_retrieval_only` 每题计检索耗时，报告 p50/p95 延迟与分题型命中汇总（reward 检索口径 score=(src+sec)/2）；rows 行尾新增 latency（6 元组，test_citations S3-03 已同步）；全量 run 的 summarize_results 新增 p50/p95/by_category，每题记录 category 与 reward 判分。
+- **ACC-U8-01** ✓：--retrieval-only 跑 questions_hard.json（samples/kb，top_k=6）——检索类 5 类 50 题全绿（pass 100%），平均文件命中 99.5%，p50=11ms/p95=32ms，分题型汇总齐备。**ACC-U8-03** ✓：全程无 LLM 客户端（agent.llm is None 断言）、零 token、零费用。
+- **涉及文件**：新增 src/agents/reward.py、benchmark/questions_hard.json、tests/test_reward.py；修改 benchmark/run_benchmark.py、tests/test_citations.py（解包适配）。
 
 ---
 

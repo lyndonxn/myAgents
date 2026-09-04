@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from agents.agent import Agent  # noqa: E402
 from agents.config import load_config  # noqa: E402
 from agents.llm import LLMClient  # noqa: E402
+from agents.reward import percentile, score_case, summarize_by_category  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 
@@ -89,6 +90,10 @@ def summarize_results(results: list[dict], threshold: float = 0.5) -> dict:
         "hallucination_rate": (total_invalid / (total_valid + total_invalid)) if (total_valid + total_invalid) else 0.0,
         "avg_latency_s": round(sum(latencies) / n, 2),
         "max_latency_s": round(max(latencies), 2),
+        # G8：p50/p95 延迟与分题型汇总（含失败类型分布与 refusal_accuracy）
+        "p50_latency_s": percentile(latencies, 50),
+        "p95_latency_s": percentile(latencies, 95),
+        "by_category": summarize_by_category(results),
         "total_cost_yuan": round(sum(r["metrics"]["cost_yuan"] for r in results), 5),
         "fallback_rate": fallbacks / n,
         "judge_avg": round(sum(scores) / len(scores), 2) if scores else None,
@@ -152,6 +157,7 @@ def run_retrieval_only(
 
     agent 可注入（T4 --kb 场景：传入 build_benchmark_agent 用样例库内存构建的
     Agent）；默认 None 时保持原行为：构造 Agent 并 load_index()。
+    G8：每题计检索耗时并在汇总中给出 p50/p95 与分题型命中汇总（reward 口径）。
     """
     if agent is None:
         agent = Agent(config)
@@ -162,19 +168,38 @@ def run_retrieval_only(
     rows = []
     for item in questions:
         qid = item["id"]
+        t0 = time.monotonic()
         hits = agent.retriever.retrieve(item["question"], top_k=k)
+        latency = time.monotonic() - t0
         retrieved_files = [h.file for h in hits]
         src = source_hit(retrieved_files, item.get("expected_files", []))
         sec = section_hit(hits, item.get("expected_sections", []))
-        rows.append((qid, item["question"], src, sec, retrieved_files))
-        print(f"  [{qid}] file={src:.0%} section={sec:.0%} | {item['question'][:36]}")
+        rows.append((qid, item["question"], src, sec, retrieved_files, latency))
+        print(f"  [{qid}] file={src:.0%} section={sec:.0%} {latency*1000:.0f}ms | {item['question'][:36]}")
         if src < 1.0 or sec < 1.0:
             for h in hits[:3]:
                 print(f"      ↳ {h.file} | {h.chunk.heading[:50]}")
 
     avg_file = sum(r[2] for r in rows) / len(rows)
     avg_sec = sum(r[3] for r in rows) / len(rows)
+    latencies = [r[5] for r in rows]
     print(f"\n平均：文件命中 {avg_file:.1%} / 章节命中 {avg_sec:.1%}（top_k={k}）")
+    print(f"延迟：p50={percentile(latencies, 50)*1000:.0f}ms / p95={percentile(latencies, 95)*1000:.0f}ms")
+
+    # G8：分题型汇总（reward 检索口径：score=(src+sec)/2）
+    pseudo = [
+        {"category": next((q.get("category", "fact") for q in questions if q["id"] == r[0]), "fact"),
+         "reward": {"score": (r[2] + r[3]) / 2, "failure_type": ""},
+         "metrics": {"latency_s": r[5]}}
+        for r in rows
+    ]
+    by_cat = summarize_by_category(pseudo)
+    print("分题型命中汇总：")
+    for category, info in by_cat.items():
+        if category == "refusal_accuracy":
+            continue
+        print(f"  {category:<12} n={info['count']} pass={info['pass_rate']:.0%} "
+              f"avg={info['avg_score']:.2f} p50={info['p50_latency_s']*1000:.0f}ms")
     return rows
 
 
@@ -256,6 +281,11 @@ def main() -> None:
                 "task_completed": 1.0 if (kw >= threshold and src >= threshold) else 0.0,
             },
             "judge": judge_answer(llm, item["question"], answer.final_answer, answer.sources) if args.judge else None,
+            # G8：独立判分（零 LLM）——score/failure_type 供分题型汇总与失败分布
+            "category": item.get("category", "fact"),
+            "reward": (lambda r: {"score": r.score, "failure_type": r.failure_type, "detail": r.detail})(
+                score_case(item["question"], answer.final_answer, answer.sources, item)
+            ),
             "error": answer.error,
         }
         m = record["metrics"]

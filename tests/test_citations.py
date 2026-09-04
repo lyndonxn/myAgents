@@ -246,7 +246,7 @@ class CitationsTests(unittest.TestCase):
         rows = rb.run_retrieval_only(questions, SimpleNamespace(top_k=6), top_k=2, agent=fake)
 
         self.assertEqual(len(rows), 2)
-        qid, q, src, sec, files = rows[0]
+        qid, q, src, sec, files, _latency = rows[0]  # G8：行尾新增检索耗时 latency
         self.assertEqual(qid, "x1")
         self.assertEqual(q, "什么是 RAG")
         self.assertEqual(src, 1.0, "rag.md 与 整体流程 均命中")
