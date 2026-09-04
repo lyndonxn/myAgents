@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import audit as audit_mod
 from .logger import get_logger
 from .planner import Plan
 from .tools import Tool, ToolContext, ToolValidationError, validate_tool_input
@@ -77,9 +78,31 @@ class Executor:
         results: list[StepResult] = []
         for step in plan.steps:
             result = self._run_step(step.step_id, step, self._history)
+            self._audit_step(result)
             self._history[step.step_id] = result
             results.append(result)
         return results
+
+    def _audit_step(self, result: StepResult) -> None:
+        """tool_call 审计事件（G6 埋点单点）：每工具步骤 1 条；无工具调用不记。
+
+        参数只记键名摘要（不记值，避免间接记录提问内容）；审计未装配或关闭时 no-op。
+        """
+        if result.output == {"text": "（无工具调用）"}:
+            return
+        audit = audit_mod.get()
+        if audit is None or not getattr(self.config, "audit_enabled", True):
+            return
+        try:
+            audit.log_tool_call(
+                action=result.action, ok=bool(result.ok),
+                error_type=str(result.error).split(":", 1)[0] if result.error else "",
+                latency_s=float(result.latency_s or 0.0), attempts=int(result.attempts or 1),
+                degraded=bool(result.degraded),
+                input_keys=sorted((result.input or {}).keys()),
+            )
+        except Exception:  # noqa: BLE001 - 审计失败不影响业务
+            pass
 
     def _run_step(self, step_id: int, step, upstream: dict[int, StepResult] | None = None) -> StepResult:
         result = StepResult(step_id=step_id, action=step.action, input=step.input, purpose=step.purpose)

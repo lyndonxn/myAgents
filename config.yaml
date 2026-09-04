@@ -75,3 +75,9 @@ memory:
   entities_enabled: false    # 实体记忆：从问答中抽取关键实体及其事实（entities.json）（P0-3：默认关闭；记忆数据保存到本机 data/）
   max_episodes: 200          # 长期记忆最多保留的经验条数，超出按命中率与新旧淘汰
   embedding_backend: auto    # 长期记忆向量后端：auto | local | tfidf（auto 优先本地模型，失败回退 TF-IDF）
+
+# 审计轨迹（G6：操作级事件按天落 data/audit/，只追加；不记录问题与答案正文）
+audit:
+  enabled: true             # 审计总开关：关闭后不写审计事件
+  retention_days: 30        # 审计文件保留天数，超期惰性清理
+  log_content: false        # 正文记录（问题与答案原文）：默认关闭，显式开启才写入

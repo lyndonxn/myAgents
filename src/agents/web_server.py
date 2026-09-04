@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import threading
 import time
 import webbrowser
@@ -22,8 +23,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urlsplit
 
-from agents.agent import Agent
+from agents import audit as audit_mod
 from agents import config as config_mod
+from agents.agent import Agent
+from agents.audit import AuditLogger
 from agents.config import (
     PROJECT_ROOT,
     key_file_permissions_ok,
@@ -47,11 +50,13 @@ CONFIG_FIELDS = {
     "llm": {"base_url", "chat_model", "temperature", "max_tokens"},
     "retrieval": {"top_k", "rerank", "rerank_candidates", "multi_query", "reranker_model"},
     "vision": {"base_url", "model", "api_key"},
+    "audit": {"retention_days", "log_content"},
 }
 MAX_BODY = 10 * 1024 * 1024        # 请求体上限 10MB
 MAX_IMAGE_DATA_URL = 6 * 1024 * 1024  # 图片 data URL 上限 6MB
 MAX_QUESTION_LEN = 8000            # 问题文本上限（防超大 prompt 打爆 LLM 额度/卡服务）
 ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_AUDIT_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")  # /api/audit date 参数格式
 
 
 def build_agent():
@@ -277,6 +282,16 @@ class Handler(BaseHTTPRequestHandler):
         if task_store is not None:
             task_store.update(record)
 
+    def _audit_admin(self, action: str, ok: bool, session_id: str = "", detail: str = "") -> None:
+        """管理操作审计（G6）：配置保存/记忆删除/索引重建/清空等；detail 只含动作摘要。"""
+        audit = audit_mod.get()
+        if audit is None:
+            return
+        try:
+            audit.log_admin(action, ok=ok, session_id=session_id, detail=detail)
+        except Exception:  # noqa: BLE001 - 审计失败不影响业务
+            pass
+
     def _session_for_workspace(self, session_id: str, workspace_id: str) -> str:
         if not session_id:
             return self.store.create_session(workspace_id)
@@ -414,6 +429,34 @@ class Handler(BaseHTTPRequestHandler):
                 }
             )
             return
+        # G6：审计事件查询（GET /api/audit?date=&type=&limit=，非法参数 400）
+        if self.path.startswith("/api/audit"):
+            parsed = urlsplit(self.path)
+            if parsed.path != "/api/audit":
+                self._send_json({"error": "not found"}, 404)
+                return
+            params = parse_qs(parsed.query)
+            date = params.get("date", [""])[0].strip()
+            event_type = params.get("type", [""])[0].strip()
+            try:
+                limit = int(params.get("limit", ["200"])[0])
+            except ValueError:
+                self._send_json({"error": "limit 须为整数"}, 400)
+                return
+            if date and not _AUDIT_DATE_RE.match(date):
+                self._send_json({"error": "date 须为 YYYY-MM-DD 格式"}, 400)
+                return
+            if not 1 <= limit <= 1000:
+                self._send_json({"error": "limit 须在 1-1000 之间"}, 400)
+                return
+            audit = audit_mod.get()
+            events = audit.query(date=date, event_type=event_type, limit=limit) if audit is not None else []
+            self._send_json({
+                "events": events,
+                "date": date or datetime.now().strftime("%Y-%m-%d"),
+                "total": len(events),
+            })
+            return
         if self.path.startswith("/api/logs"):
             self._send_json(self._logs_view())
             return
@@ -478,6 +521,7 @@ class Handler(BaseHTTPRequestHandler):
             lm = getattr(self.agent, "long_memory", None)
             removed = lm.delete_by_session(session_id) if lm is not None else 0
             LOG.info("删除会话长期记忆 | session=%s | removed=%d", session_id, removed)
+            self._audit_admin("memory_delete_session", True, session_id=session_id, detail=f"removed={removed}")
             self._send_json({"ok": True, "removed": removed})
             return
         # G4/P0-2：删除单条长期记忆（DELETE /api/memory/{episode_id}）
@@ -487,8 +531,10 @@ class Handler(BaseHTTPRequestHandler):
             deleted = lm.delete_episode(episode_id) if lm is not None else False
             if deleted:
                 LOG.info("删除长期记忆条目 | episode=%s", episode_id)
+                self._audit_admin("memory_delete", True, detail=f"episode={episode_id}")
                 self._send_json({"ok": True})
             else:
+                self._audit_admin("memory_delete", False, detail=f"episode={episode_id}")
                 self._send_json({"error": "记忆条目不存在"}, 404)
             return
         self._send_json({"error": "not found"}, 404)
@@ -731,6 +777,7 @@ class Handler(BaseHTTPRequestHandler):
                 lm = getattr(self.agent, "long_memory", None)
                 removed = lm.delete_by_session(session_id) if lm is not None else 0
             LOG.info("重置会话记忆（同步删除长期记忆 %d 条）", removed)
+            self._audit_admin("session_reset", True, session_id=session_id, detail=f"long_term_removed={removed}")
             self._send_json({"ok": True, "memory_turns": 0, "long_term_removed": removed})
             return
 
@@ -742,6 +789,7 @@ class Handler(BaseHTTPRequestHandler):
                 episodes = lm.clear() if lm is not None else 0
                 entities = em.clear() if em is not None else 0
             LOG.info("清空长期记忆与实体记忆（episodes=%d，entities=%d）", episodes, entities)
+            self._audit_admin("memory_clear", True, detail=f"episodes={episodes},entities={entities}")
             self._send_json({"ok": True, "episodes": episodes, "entities": entities})
             return
 
@@ -869,6 +917,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.building = True
                 self.build_error = ""
                 LOG.info("开始重建知识库索引: %s", path)
+                self._audit_admin("kb_rebuild", True, detail=str(path))
                 threading.Thread(target=rebuild, daemon=True).start()
             self._send_json({"ok": True, "building": True, "path": str(path), "md_count": md_count})
             return
@@ -932,6 +981,11 @@ class Handler(BaseHTTPRequestHandler):
                 LOG.warning("配置保存失败: %s", exc)
                 return 400, {"error": f"配置保存失败: {exc}"}
         LOG.info("配置已更新: %s", {s: list(v.keys()) for s, v in overrides.items()})
+        # G6：配置保存管理事件（只记键名摘要，绝不记值）
+        self._audit_admin(
+            "config_save", True,
+            detail=",".join(sorted(f"{s}.{k}" for s, keys in overrides.items() for k in keys)),
+        )
         return 200, {"ok": True, "config": self._config_view()}
 
     def _config_view(self) -> dict:
@@ -977,6 +1031,15 @@ def main() -> None:
 
     config = load_config()
     setup_logging(config.data_dir / "logs")
+    # G6：装配审计轨迹（audit.enabled=false 时装配 no-op 空审计器，埋点统一入口）
+    if config.audit_enabled:
+        audit_mod.set_logger(AuditLogger(
+            config.data_dir / "audit",
+            retention_days=config.audit_retention_days,
+            log_content=config.audit_log_content,
+        ))
+        LOG.info("审计轨迹已启用: data/audit/（保留 %d 天，正文记录=%s）",
+                 config.audit_retention_days, config.audit_log_content)
     LOG.info("myAgents Web 启动中… port=%s", args.port)
     Handler.agent = build_agent()
     Handler.store = WebStore(config.data_dir / "webui.sqlite3")

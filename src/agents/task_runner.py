@@ -27,6 +27,7 @@ import queue
 import threading
 from typing import Callable
 
+from . import audit as audit_mod
 from .agent import Agent
 from .executor import Executor, StepResult
 from .logger import get_logger
@@ -378,6 +379,8 @@ class TaskRunner:
         agent = self.agent_provider()
         if agent is None:
             raise RuntimeError("Agent 不可用")
+        # G6：标记当前线程的会话上下文，使 tool_call/llm_call 审计事件关联会话
+        audit_mod.set_current_session(record.session_id)
         # G3：本次任务的请求级联网许可（submit 透传；None → 按配置）
         allow_web_flag = (self._egress.get(record.task_id) or {}).get("allow_web")
         effective_allow_web = agent.resolve_allow_web(allow_web_flag)
@@ -472,8 +475,43 @@ class TaskRunner:
         record.status = STATUS_COMPLETED
         sync_usage()
         self.store.update(record)
+        self._audit_task(record)
         self._cleanup_events(record.task_id)
         self._notify_complete(record)  # T1：completed 落盘后回调（锁外，回调方自行加锁）
+
+    def _audit_task(self, record: TaskRecord) -> None:
+        """任务 ask 终态审计事件（G6）：带 task_id 关联；正文按 audit.log_content。"""
+        audit = audit_mod.get()
+        if audit is None:
+            return
+        try:
+            usage = record.usage if isinstance(record.usage, dict) else {}
+            audit.log_ask(
+                ok=True, session_id=record.session_id, latency_s=self._task_latency(record),
+                prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                completion_tokens=int(usage.get("completion_tokens", 0)),
+                cost_yuan=float(usage.get("cost_yuan", 0.0)),
+                degraded=any(bool(s.get("degraded")) for s in record.steps),
+                web_used=any(s.get("action") == "web_search" and bool(s.get("ok")) for s in record.steps),
+                task_id=record.task_id,
+                question=record.question if audit.log_content else None,
+                answer=record.final_answer if audit.log_content else None,
+            )
+        except Exception:  # noqa: BLE001 - 审计失败不影响业务
+            pass
+
+    @staticmethod
+    def _task_latency(record: TaskRecord) -> float:
+        """任务耗时（秒）：updated_at − created_at；解析失败返回 0.0。"""
+        try:
+            from datetime import datetime
+
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            t0 = datetime.strptime(record.created_at[:19], fmt)
+            t1 = datetime.strptime(record.updated_at[:19], fmt)
+            return max(0.0, (t1 - t0).total_seconds())
+        except (ValueError, TypeError, AttributeError):
+            return 0.0
 
     @staticmethod
     def _append_step(record: TaskRecord, step_dict: dict) -> None:

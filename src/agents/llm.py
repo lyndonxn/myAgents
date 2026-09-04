@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 
 import requests
 
+from . import audit as audit_mod
+
 
 class LLMError(RuntimeError):
     pass
@@ -123,8 +125,36 @@ class LLMClient:
         raise LLMError(f"LLM 请求失败（重试 {self.config.llm_max_retries} 次后）: {last_err}")
 
     # ---- 公开方法 ----
+    def _chat_audited(self, messages: list[dict], **kwargs) -> ChatResult:
+        """_chat + llm_call 审计（G6 埋点单点：公开路径统一走这里，子类覆写 _chat 也生效）。"""
+        try:
+            result = self._chat(messages, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - 记录后原样抛出
+            self._audit_llm(ok=False, latency_s=0.0, error_type=type(exc).__name__)
+            raise
+        self._audit_llm(
+            ok=True, latency_s=result.latency_s,
+            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+        )
+        return result
+
+    def _audit_llm(self, ok: bool, latency_s: float, prompt_tokens: int = 0,
+                   completion_tokens: int = 0, error_type: str = "") -> None:
+        """写 llm_call 审计事件（未装配审计器或已关闭时 no-op；永不记录 messages 与 Key）。"""
+        audit = audit_mod.get()
+        if audit is None or not getattr(self.config, "audit_enabled", True):
+            return
+        try:
+            audit.log_llm_call(
+                ok=ok, latency_s=latency_s, prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens, error_type=error_type,
+                model=getattr(self.config, "llm_chat_model", ""),
+            )
+        except Exception:  # noqa: BLE001 - 审计失败不影响业务
+            pass
+
     def chat(self, messages: list[dict], **kwargs) -> ChatResult:
-        return self._chat(messages, **kwargs)
+        return self._chat_audited(messages, **kwargs)
 
     def chat_json(self, messages: list[dict], **kwargs) -> object:
         """要求 JSON 输出并稳健解析；解析失败走修复轮，耗尽后抛 LLMError。
@@ -134,7 +164,7 @@ class LLMClient:
         """
         use_format = self.config.llm_chat_model.startswith(("deepseek-chat", "deepseek-reasoner"))
         response_format = {"type": "json_object"} if use_format else None
-        result = self._chat(messages, response_format=response_format, **kwargs)
+        result = self._chat_audited(messages, response_format=response_format, **kwargs)
         try:
             return parse_json_robust(result.text)
         except LLMError as first_err:
@@ -154,7 +184,7 @@ class LLMClient:
                         ),
                     },
                 ]
-                result = self._chat(convo, response_format=response_format, **kwargs)
+                result = self._chat_audited(convo, response_format=response_format, **kwargs)
                 try:
                     return parse_json_robust(result.text)
                 except LLMError as err:

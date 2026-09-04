@@ -25,6 +25,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from . import audit as audit_mod
 from .bm25 import BM25Index
 from .chunking import Chunk, Leaf, summarize_corpus
 from .citations import validate_citations
@@ -345,6 +346,8 @@ class Agent:
             self.load_index()
         self.ensure_llm()
 
+        # G6：标记当前线程的会话上下文，使 tool_call/llm_call 审计事件关联会话
+        audit_mod.set_current_session(session_id)
         # G3：本次问答的联网许可与工具视图（remember/allow_web 缺省 None → 按配置）
         effective_allow_web = self.resolve_allow_web(allow_web)
         run_tools = self._tools_for_run(effective_allow_web)
@@ -435,6 +438,7 @@ class Agent:
             self.memory.maybe_compress(self.llm)
             # 4.6 长期记忆与实体记忆（S4）：仅在提供 session_id 时写入；remember=False 本次不写
             self._remember_long_term(question, answer, session_id, remember=remember)
+        self._audit_ask(question, answer, session_id)
         LOG.info(
             "ask | q=%s | %.1fs | calls=%d | in=%d out=%d | ¥%.4f | %s",
             question[:50].replace("\n", " "), answer.total_latency_s, answer.llm_calls,
@@ -442,6 +446,28 @@ class Agent:
             answer.error or "ok",
         )
         return answer
+
+    def _audit_ask(self, question: str, answer: Answer, session_id: str) -> None:
+        """ask 终态审计事件（G6 埋点单点）：正文仅在 audit.log_content 显式开启时写入。"""
+        audit = audit_mod.get()
+        if audit is None or not self.config.audit_enabled:
+            return
+        try:
+            audit.log_ask(
+                ok=bool(answer.ok), session_id=session_id, latency_s=answer.total_latency_s,
+                llm_calls=int(answer.llm_calls), prompt_tokens=int(answer.prompt_tokens),
+                completion_tokens=int(answer.completion_tokens), cost_yuan=float(answer.estimated_cost),
+                degraded=any(bool(getattr(step, "degraded", False)) for step in answer.steps),
+                web_used=any(
+                    getattr(step, "action", "") == "web_search" and bool(getattr(step, "ok", False))
+                    for step in answer.steps
+                ),
+                question=question if audit.log_content else None,
+                answer=answer.final_answer if audit.log_content else None,
+                error_type=str(answer.error).split(":", 1)[0] if answer.error else "",
+            )
+        except Exception:  # noqa: BLE001 - 审计失败不影响业务
+            pass
 
     def _remember_long_term(
         self, question: str, answer: Answer, session_id: str, remember: bool | None = None

@@ -75,7 +75,22 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G2 沿用 `{"error", "errors"}` 响应体：P1-5 统一错误码契约挂账后置。
 
 ## 下一步动作
-G6 审计轨迹（spec/upgrade-2026-09 ACC-U6-01..04）：新增 `src/agents/audit.py`（JSONL 按天分文件、只追加、保留天数可配、不记正文与 Key），executor/llm/管理操作埋点，`GET /api/audit` 查询接口。push 状态：未 push（未授权）。
+第三批 G7 任务 watchdog（P1-2，spec/p0-p1-improvement.md）：任务卡死检测与超时看门狗，`task_runner.py`/`task_store.py`。push 状态：未 push（未授权）。
+
+---
+
+## G6 切片记录（2026-09-04，控制器续接）
+
+- **验证证据**：`unittest discover` 128/128 OK（G5 后 121 → 新增 test_audit 7 用例）；直跑 15/15 退出码 0；compileall 通过；全程离线（审计目录 tempfile，绝不写用户 data/audit/）。
+- **模块**：新增 `src/agents/audit.py`——`AuditLogger`（JSONL 按天分文件只追加、retention_days 惰性清理、log_content 正文开关）+ 全局装配（`set_logger/get`）+ 会话上下文（`set_current_session`，threading.local）。
+- **事件分层**（不记正文与 Key）：
+  - `ask`：agent.ask 终态 + 任务 completed 路径（带 task_id）；ok/latency/llm_calls/tokens/cost/degraded/web_used/error_type；正文仅 log_content=True 写入（ACC-U6-02）。
+  - `tool_call`：executor.execute 每工具步骤 1 条；action/ok/error_type/latency/attempts/degraded/input_keys（参数只记键名摘要，不记值）。
+  - `llm_call`：llm.chat 与 chat_json（含修复轮）每次 _chat 1 条；ok/latency/tokens/model；埋点在 `_chat_audited`，子类覆写 _chat 的假客户端同样生效。
+  - `admin`：config_save（只记键名摘要不记值）/memory_delete/memory_delete_session/memory_clear/session_reset/kb_rebuild；含操作者会话与结果摘要（ACC-U6-03）。
+- **查询接口**：`GET /api/audit?date=&type=&limit=`——date 缺省当天、type 过滤、limit 1–1000（新→旧）；date 格式错/limit 非法 → 400，未知子路径 → 404（ACC-U6-04）。
+- **装配与开关**：`config.yaml` 新增 `audit.{enabled,retention_days,log_content}`（默认 true/30/false）；`web_server.main()` 装配；`audit.enabled=false` 不装配（埋点 no-op）；validate_config 新增 audit.retention_days（1–3650）与 audit.{enabled,log_content} 布尔规则；CONFIG_FIELDS 白名单开放 retention_days/log_content。
+- **涉及文件**：新增 src/agents/audit.py、tests/test_audit.py；修改 config.yaml、src/agents/{config,agent,executor,llm,task_runner,web_server}.py。
 
 ---
 

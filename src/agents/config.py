@@ -162,6 +162,7 @@ _INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "embedding.hash_dim": (64, 65536),
     "chunking.min_chars": (0, 100000),
     "chunking.max_chars": (0, 100000),
+    "audit.retention_days": (1, 3650),
 }
 _POSITIVE_INT_KEYS: tuple[str, ...] = ("llm.timeout",)  # 整数且 >0
 # 浮点规则（int 或 float 均可，bool 不算，闭区间）
@@ -196,6 +197,8 @@ _BOOL_KEYS: frozenset[str] = frozenset({
     "tools.web_search_enabled",
     "memory.long_term_enabled",
     "memory.entities_enabled",
+    "audit.enabled",
+    "audit.log_content",
 })
 _NONEMPTY_NO_NUL_KEYS: tuple[str, ...] = ("kb_path", "data_dir")  # 非空且无 NUL
 _URL_KEYS: tuple[str, ...] = ("llm.base_url", "vision.base_url")  # 非空时须 http(s):// 开头
@@ -654,6 +657,22 @@ class Config:
     @property
     def web_search_cache_ttl(self) -> float:
         return float(self.get("tools.web_search.cache_ttl", 300.0))
+
+    # ---- 审计轨迹（G6） ----
+    @property
+    def audit_enabled(self) -> bool:
+        """审计总开关：关闭后不写审计事件。"""
+        return bool(self.get("audit.enabled", True))
+
+    @property
+    def audit_retention_days(self) -> int:
+        """审计文件保留天数。"""
+        return int(self.get("audit.retention_days", 30))
+
+    @property
+    def audit_log_content(self) -> bool:
+        """是否记录问题与答案正文（P0-5 语义：默认关闭，显式开启才写）。"""
+        return bool(self.get("audit.log_content", False))
 
 
 def _maybe_log_egress_migration_hint() -> None:
