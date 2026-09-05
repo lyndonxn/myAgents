@@ -91,8 +91,9 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 | G9 | 速度成本包（快路径/max_tokens/重排/证据压缩） | c2cb0a1 |
 | G10 | 检索迭代循环（改写再检索 + max_search_calls 预算） | ffc7169 |
 | G11 | 本地 LLM 离线档位（空 Key 本地端点 / 非 DeepSeek JSON 约束 / allow_web 单点钳制 / prepare_offline 体检） | 882ce00 |
+| G3 补遗 | 三开关接入设置面板（CONFIG_FIELDS 白名单 + _config_view 透出 + 检索页/记忆页三下拉） | 4c6e906 |
 
-最终验证：`unittest discover` **173/173 OK**；直跑 20/20 退出码 0；compileall（src+tests+benchmark+scripts）通过；全程离线。
+最终验证：`unittest discover` **179/179 OK**；直跑 20/20 退出码 0；compileall（src+tests+benchmark+scripts）通过；全程离线。
 
 ### 延期挂账（均为显式决策，无隐藏风险）
 1. **ACC-U9-03 / ACC-U10-03**：付费 100 题实跑对比（延迟/token/reward 前后对比），需用户单独授权后运行 `benchmark/run_benchmark.py --questions benchmark/questions_hard.json`。
