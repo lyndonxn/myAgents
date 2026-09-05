@@ -28,7 +28,7 @@ export default function SidebarEdgeToggle(props: {
         viewBox="0 0 8 8"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.2"
+        strokeWidth="1.4"
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"

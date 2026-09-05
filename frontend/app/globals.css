@@ -807,23 +807,23 @@ body{
 /* visibility 保留栅格占位（聊天区/右侧面板列位不变）；opacity 与宽度同步淡出 */
 .app .rail{overflow:hidden;transition:opacity 200ms ease-out,visibility 200ms ease-out;}
 .app.rail-collapsed .rail{visibility:hidden;opacity:0;}
-/* 骑缝圆钮：20×20 白底 0.5px 描边，骑跨分界线，z 高于两栏 */
+/* 骑缝圆钮：24×24 白底 0.5px 描边，骑跨分界线，z 高于两栏（W11 反馈：稍大一号） */
 .edge-toggle{
-  position:absolute;top:50%;width:20px;height:20px;border-radius:50%;
+  position:absolute;top:50%;width:24px;height:24px;border-radius:50%;
   background:#ffffff;border:0.5px solid #c9c8c4;
   display:grid;place-items:center;cursor:pointer;padding:0;z-index:20;
   transition:border-color 150ms ease-out;
 }
 .edge-toggle svg{
-  width:8px;height:8px;stroke:#888888;
+  width:10px;height:10px;stroke:#888888;
   transition:stroke 150ms ease-out,transform 200ms ease-out;
 }
 .edge-toggle:hover{border-color:#999999;}
 .edge-toggle:hover svg{stroke:#000000;}
-.edge-left{left:-10px;transform:none;}
+.edge-left{left:-12px;transform:none;}
 .edge-left.collapsed svg{transform:rotate(180deg);}
 /* side="right"（右侧信息面板复用）：镜像几何与转向 */
-.edge-right{right:-10px;transform:none;}
+.edge-right{right:-12px;transform:none;}
 .edge-right svg{transform:scaleX(-1);}
 .edge-right.collapsed svg{transform:scaleX(-1) rotate(180deg);}
 
@@ -850,6 +850,6 @@ body{
 .app.trace-collapsed .trace{visibility:hidden;opacity:0;}
 /* 窄屏 .trace 整列隐藏时，右缘骑缝钮一并隐藏 */
 @media (max-width:1080px){.edge-right{display:none;}}
-/* 右缘骑缝钮收起态：贴边完整可见（向左让位 10px） */
-.edge-right.collapsed{transform:translateX(-10px);}
-.edge-left.collapsed{transform:translateX(10px);}
+/* 右缘骑缝钮收起态：贴边完整可见（向内让位 12px） */
+.edge-right.collapsed{transform:translateX(-12px);}
+.edge-left.collapsed{transform:translateX(12px);}
