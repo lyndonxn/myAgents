@@ -116,6 +116,7 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ## W5 切片记录（2026-09-05，composer 上下结构 + 左侧上下文竖轨 + 圆形图标发送键）
 
+- **追加（同日用户反馈）**：生成阶段不再用 spinner/扫描动画——`liveAnswerHTML` streaming 分支改 `.gen-status` 静默状态行（11.5px 小字「正在生成答案 · 引用 N 段内容」+ 1px 细线，无任何动画）；检索阶段（无正文时）保留 `.retrieving` spinner。冒烟：检索态有 spinner、生成态 noSpinner=true + 光标在。
 - **背景**：用户三项目标：①「图片」上传改图1 的上下结构（textarea 整行 + 底部操作行）并约束输入区最大宽度；②上下文表移到页面左侧竖排（图2 左缘样式）；③发送键改圆形图标（↑/■ 两态）。
 - **验证证据**：`unittest discover` 191/191 OK；node --check 通过；浏览器冒烟：composerWidth=760（与聊天列同宽约束）、sendArrow=true、竖轨 24 段、12% → 3 段绿 rgb(34,180,46)、93% → 22 段红、明暗 token 自适应；视觉验收由用户实测确认。
 - **实现（仅 scripts/webui.html）**：
