@@ -116,6 +116,8 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ## W6 切片记录（2026-09-05，前端 Next.js 改写启动；S1 脚手架+管线完成）
 
+- **S2 完成（同日）**：会话/工作区状态层。新增 `lib/api.ts`（fetch 封装，与 legacy 1:1）与 `components/{TopBar,Rail,Chat,Composer,TracePanel}.tsx`；`page.tsx` 客户端根：workspaces→sessions→首个会话初始化、会话切换/删除（confirm）/重置/新建（含 ⌘K）、工作区切换（失败回退）、状态轮询 5s（索引灯/记忆轮数/知识库概览四格/上下文竖轨百分比）+ 心跳 3s、toast、主题切换（localStorage 持久化）。消息区为 S2 简化渲染（INTRO+纯文本卡），S4 换完整答案卡；composer 发送/上传/语音为禁用壳（S5 接入）；设置/知识库管理入口暂 toast 提示（S7）。**验证**：typecheck 0 错；`next build` 导出成功；8788 真实后端端到端——13 个真实会话加载、激活「agent定义」消息渲染、状态灯 已连接·已同步、docCount 142/chunkCount 636/命中率 88.9%、会话切换（什么是skill 5问+6卡）全通；截图核对。
+
 - **决策（用户拍板）**：前端从单文件 HTML 迁移到 **Next.js（App Router）静态导出**，由现有 Python 服务器伺服（本地优先单进程不变，API 同源零跨域，后端零协议改动）。**备份**：`scripts/webui.legacy.html`（逐字节副本）+ git 标签 `webui-html-final`（cebe790）。工具链：Node v24.19.0 / npm 11.17.0。
 - **目录与管线**：新增 `frontend/`（Next 15 + React 19 + TS loose）；`npm run dev` = 3000 端口 + `/api` 代理到 8787（NEXT_DEV_PROXY=1，浏览器视角同源，后端零 CORS 改动）；`npm run build` = `output:'export'` 产出 `frontend/out/`；`frontend/{node_modules,.next,out,next-env.d.ts}` 已 gitignore，out/ 本地构建后长期有效。
 - **服务器（S1）**：`web_server.py` 新增 `EXPORT_DIR` 与 `Handler._static_export()`——`/`→out/index.html、`/_next/*` 等静态资源按 MIME 伺服（resolve + relative_to 防穿越，文本补 charset）；out/ 缺失自动回退 legacy `scripts/webui.html`（双击启动在未构建环境仍可用）。

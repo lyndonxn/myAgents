@@ -1,207 +1,268 @@
-/* W6-S1 静态壳：三栏 chrome 全量移植（类名与 legacy 一致，样式来自 globals.css）。
- * 后续切片逐块接入行为：S2 会话/工作区 → S3 流式聊天 → S4 答案卡 → S5 composer → S6 面板 → S7 设置。 */
+"use client";
 
-const IDLE_STEPS = [
-  { name: "查询改写", en: "Query Rewrite" },
-  { name: "向量检索", en: "Vector Search" },
-  { name: "交叉重排", en: "Rerank · Top-5" },
-  { name: "组装上下文", en: "Assemble Context" },
-  { name: "生成回答", en: "Generate" },
-  { name: "引用校验", en: "Citation Check" },
-];
+/* W6-S2 根组件：会话/工作区状态层 + 状态轮询 + 心跳。
+ * 后续切片：S3 发送/流式 → S4 答案卡 → S5 输入区行为 → S6 面板 → S7 设置。 */
 
-const QUICK_ACTIONS = [
-  { icon: "◈", title: "随机抽取面试题", desc: "从 50 道高频题中随机抽一道" },
-  { icon: "⟳", title: "RAG 完整流程", desc: "离线建库与在线检索全链路" },
-  { icon: "⇅", title: "重排的必要性", desc: "召回与精排的分工逻辑" },
-  { icon: "⇗", title: "联网检索示例", desc: "知识库未命中时自动联网" },
-];
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type SessionInfo } from "@/lib/api";
+import TopBar, { type IndexState } from "@/components/TopBar";
+import Rail, { type KbSummary } from "@/components/Rail";
+import Chat, { type MsgVM } from "@/components/Chat";
+import Composer from "@/components/Composer";
+import TracePanel from "@/components/TracePanel";
+
+const INTRO: MsgVM = { kind: "intro" };
 
 export default function Home() {
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState("");
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [currentSession, setCurrentSession] = useState("");
+  const [messages, setMessages] = useState<MsgVM[]>([INTRO]);
+  const [indexState, setIndexState] = useState<IndexState>({ label: "连接中", ok: false });
+  const [memCount, setMemCount] = useState(0);
+  const [kb, setKb] = useState<KbSummary>({
+    docCount: "—",
+    chunkCount: "—",
+    hitRate: "—",
+    todayQueries: "—",
+    syncLabel: "连接中",
+  });
+  const [ctxPct, setCtxPct] = useState(0);
+  const [toast, setToast] = useState<{ msg: string; error: boolean } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string, error = false) => {
+    setToast({ msg, error });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  }, []);
+
+  /* ----- 会话 ----- */
+  const openSession = useCallback(
+    async (id: string, known?: SessionInfo[]) => {
+      setCurrentSession(id);
+      try {
+        const list = known ?? sessions;
+        if (!list.some((s) => s.id === id)) {
+          const sd = await api.sessions(activeWorkspace);
+          setSessions(sd.sessions);
+        }
+        const data = await api.sessionMessages(id);
+        let lastQ = "";
+        setMessages([
+          INTRO,
+          ...data.messages.map((m): MsgVM => {
+            if (m.role === "user") {
+              lastQ = m.content;
+              return { kind: "user", text: m.content };
+            }
+            return { kind: "agent", text: m.content };
+          }),
+        ]);
+      } catch (e) {
+        showToast((e as Error).message || "加载会话失败", true);
+      }
+    },
+    [activeWorkspace, sessions, showToast],
+  );
+
+  const createSession = useCallback(
+    async (ws?: string) => {
+      const workspaceId = ws ?? activeWorkspace;
+      try {
+        const d = await api.createSession(workspaceId);
+        setSessions((prev) => [
+          { id: d.session_id, title: "新的会话", updated_at: new Date().toISOString(), message_count: 0 },
+          ...prev,
+        ]);
+        setMessages([INTRO]);
+        setCurrentSession(d.session_id);
+        return d.session_id;
+      } catch (e) {
+        showToast((e as Error).message || "新建会话失败", true);
+        return null;
+      }
+    },
+    [activeWorkspace, showToast],
+  );
+
+  const loadSessionsInto = useCallback(
+    async (workspaceId: string, preferred?: string) => {
+      const data = await api.sessions(workspaceId);
+      setSessions(data.sessions);
+      if (!data.sessions.length) {
+        await createSession(workspaceId);
+        return;
+      }
+      const id = preferred && data.sessions.some((s) => s.id === preferred) ? preferred : data.sessions[0].id;
+      await openSession(id, data.sessions);
+    },
+    [createSession, openSession],
+  );
+
+  const onNewSession = useCallback(async () => {
+    await createSession();
+  }, [createSession]);
+
+  const onDeleteSession = useCallback(
+    async (id: string) => {
+      const s = sessions.find((x) => x.id === id);
+      if (!s) return;
+      if (!confirm(`确定删除会话“${s.title}”吗？删除后无法恢复。`)) return;
+      try {
+        await api.deleteSession(id);
+        showToast("会话已删除");
+        const rest = sessions.filter((x) => x.id !== id);
+        setSessions(rest);
+        if (currentSession === id) {
+          if (rest.length) await openSession(rest[0].id, rest);
+          else await createSession();
+        }
+      } catch (e) {
+        showToast((e as Error).message || "删除失败", true);
+      }
+    },
+    [sessions, currentSession, openSession, createSession, showToast],
+  );
+
+  const onResetSession = useCallback(async () => {
+    if (!currentSession) return;
+    if (!confirm("确定清空当前会话的对话记录吗？可同时删除该会话长期记忆，删除后无法恢复。")) return;
+    try {
+      await api.resetSession(currentSession);
+    } catch (_e) {
+      /* 后端离线也照常清空本地视图 */
+    }
+    setMessages([INTRO]);
+    setMemCount(0);
+  }, [currentSession]);
+
+  /* ----- 工作区 ----- */
+  const onSwitchWorkspace = useCallback(
+    async (id: string) => {
+      const previous = activeWorkspace;
+      try {
+        await api.switchWorkspace(id);
+        setActiveWorkspace(id);
+        setMessages([INTRO]);
+        await loadSessionsInto(id);
+      } catch (e) {
+        showToast((e as Error).message || "切换失败", true);
+        setActiveWorkspace(previous);
+      }
+    },
+    [activeWorkspace, loadSessionsInto, showToast],
+  );
+
+  /* ----- 初始化：workspaces → sessions → 首个会话 ----- */
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api.workspaces();
+        setWorkspaces(data.workspaces.map((w) => ({ id: w.id, name: w.name })));
+        setActiveWorkspace(data.active);
+        await loadSessionsInto(data.active);
+      } catch (_e) {
+        setIndexState({ label: "后端未连接", ok: false });
+        setKb((k) => ({ ...k, syncLabel: "连接中断" }));
+      }
+    })();
+    // 仅挂载时执行一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ----- 状态轮询（5s）+ 心跳（3s）----- */
+  const refreshStatus = useCallback(async () => {
+    try {
+      const st = await api.status();
+      setIndexState({ label: st.building ? "已连接 · 重建中" : "已连接 · 已同步", ok: true });
+      setMemCount(st.memory_turns ?? 0);
+      const used = st.context?.prompt_tokens ?? 0;
+      const max = st.context?.max_context ?? 128000;
+      setCtxPct(Math.min(1, used / max));
+      const [kbR, stR] = await Promise.allSettled([api.kb(), api.stats()]);
+      if (kbR.status === "fulfilled")
+        setKb((k) => ({
+          ...k,
+          docCount: String(kbR.value.md_count ?? "—"),
+          chunkCount: String(st.leaves ?? "—"),
+          syncLabel: kbR.value.building ? "重建中" : "已同步",
+        }));
+      if (stR.status === "fulfilled")
+        setKb((k) => ({
+          ...k,
+          hitRate: String(stR.value.hit_rate ?? "—"),
+          todayQueries: String(stR.value.today_queries ?? "—"),
+        }));
+    } catch (_e) {
+      setIndexState({ label: "后端未连接", ok: false });
+      setKb((k) => ({ ...k, syncLabel: "连接中断" }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const beat = () => {
+      api.heartbeat().catch(() => {});
+    };
+    beat();
+    const t = setInterval(beat, 3000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    refreshStatus();
+    const t = setInterval(refreshStatus, 5000);
+    return () => clearInterval(t);
+  }, [refreshStatus]);
+
+  /* ----- ⌘K 新建会话 ----- */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        void createSession();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [createSession]);
+
+  const onToggleTheme = () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("myagents-theme", next);
+  };
+
   return (
     <div className="app">
-      {/* ======== TOP BAR ======== */}
-      <header className="topbar">
-        <div className="brand">
-          <span className="logo">M</span>
-          <span className="wordmark">MYAGENTS</span>
-          <span className="plan">TEAM</span>
-        </div>
-        <div className="topbar-right">
-          <div className="ws-switch">
-            <span className="ws-ic" />
-            <select id="workspaceSelect" aria-label="工作区" defaultValue="服务未启动">
-              <option>服务未启动</option>
-            </select>
-          </div>
-          <div className="stat">
-            <span className="dot" id="statusDot" />
-            <span className="k">索引</span>
-            <span id="indexStatus">连接中</span>
-          </div>
-          <div className="stat">
-            <span className="k">记忆</span>
-            <span id="memCount">0</span> 轮
-          </div>
-          <button className="topbtn" type="button">重置会话</button>
-          <button className="topbtn" type="button">设置</button>
-          <button className="topbtn" id="themeBtn" title="切换主题" type="button">◐</button>
-          <span className="account">徐</span>
-        </div>
-      </header>
-
-      {/* ======== LEFT RAIL ======== */}
-      <aside className="rail">
-        <button className="newsession" type="button">
-          <span>＋ 新建会话</span>
-          <span className="kbd">⌘K</span>
-        </button>
-        <div className="rail-search">
-          <input id="sessionSearch" placeholder="搜索对话" />
-          <span className="rs-kbd">⌕</span>
-        </div>
-        <div className="rail-section">
-          <span>最近会话</span>
-          <span id="sesCount">00</span>
-        </div>
-        <div className="sessions scroll" id="sessionList" />
-        <div className="kb-card">
-          <div className="kb-label">
-            <span>知识库概览</span>
-            <span className="live" id="kbSyncStatus">连接中</span>
-          </div>
-          <div className="kb-grid">
-            <div className="kb-cell"><div className="kc-v"><span id="docCount">—</span><span className="u">篇</span></div><div className="kc-k">文档总数</div></div>
-            <div className="kb-cell"><div className="kc-v"><span id="chunkCount">—</span><span className="u">块</span></div><div className="kc-k">知识片段</div></div>
-            <div className="kb-cell"><div className="kc-v"><span id="hitRate">—</span><span className="u">%</span></div><div className="kc-k">今日命中率</div></div>
-            <div className="kb-cell"><div className="kc-v"><span id="todayQueries">—</span><span className="u">次</span></div><div className="kc-k">今日检索</div></div>
-          </div>
-          <div className="kb-manage"><span>管理知识库</span><span>→</span></div>
-        </div>
-      </aside>
-
-      {/* ======== CHAT ======== */}
+      <TopBar
+        workspaces={workspaces}
+        activeWorkspace={activeWorkspace}
+        indexState={indexState}
+        memCount={memCount}
+        onSwitchWorkspace={onSwitchWorkspace}
+        onResetSession={onResetSession}
+        onOpenSettings={() => showToast("设置面板将在 S7 迁移", false)}
+        onToggleTheme={onToggleTheme}
+      />
+      <Rail
+        sessions={sessions}
+        currentSession={currentSession}
+        kb={kb}
+        onNewSession={onNewSession}
+        onOpenSession={(id) => void openSession(id)}
+        onDeleteSession={(id) => void onDeleteSession(id)}
+        onManageKb={() => showToast("知识库管理将在 S7 迁移", false)}
+      />
       <main className="chat">
-        <div className="ctx-rail" id="ctxLine" title="上下文容量" />
-        <div className="chat-scroll scroll" id="chatScroll">
-          <div className="chat-inner" id="chatInner">
-            <div className="date-div">
-              <span>{new Date().toLocaleDateString("zh-CN")} · 会话记录</span>
-            </div>
-            <div className="welcome">
-              <div className="w-top">
-                <div className="w-text">
-                  <div className="w-title">检索你的知识库</div>
-                  <div className="w-sub">
-                    当前工作区已索引 <b>— 篇文档 · — 个知识块</b>。直接输入问题，所有回答都会标注命中来源。
-                  </div>
-                </div>
-              </div>
-              <div className="quick-grid">
-                {QUICK_ACTIONS.map((a) => (
-                  <button className="quick-card" type="button" key={a.title}>
-                    <div className="qc-t">
-                      <span className="qc-ico">{a.icon}</span>
-                      <span>{a.title}</span>
-                    </div>
-                    <div className="qc-d">{a.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="msg agent">
-              <div className="avatar">M</div>
-              <div className="m-main">
-                <div className="msg-label">
-                  <span>MYAGENTS</span>
-                  <span className="role-tag">RAG · PLANNER · TOOLS</span>
-                </div>
-                <div className="card">
-                  <div className="block lead show">
-                    你好，我是 MYAGENTS 知识库问答助手（<b>RAG + 规划层 + 工具层</b>）。
-                    可以直接询问知识库内的内容，支持连续追问；默认只在知识库内检索，
-                    未命中时会先询问是否联网，所有回答均附引用来源。
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="composer">
-          <div className="composer-inner">
-            <div className="img-preview" id="imgPreview" hidden>
-              <img id="imgThumb" alt="待搜索图片" />
-              <button className="img-clear" type="button" title="移除图片" aria-label="移除图片">×</button>
-            </div>
-            <div className="inputrow">
-              <textarea id="input" rows={1} placeholder="输入问题，Enter 发送，Shift+Enter 换行" />
-              <div className="input-actions">
-                <button className="iconbtn addbtn" id="imgBtn" title="上传图片（也可直接拖入）" aria-label="上传图片" type="button">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-                </button>
-                <span className="ia-spacer" />
-                <button className="iconbtn" id="micBtn" title="语音输入" aria-label="语音输入" type="button">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8" /></svg>
-                </button>
-                <input type="file" id="imgFile" accept="image/*" hidden />
-                <button className="sendbtn" id="sendBtn" aria-label="发送消息" type="button" disabled />
-              </div>
-            </div>
-            <div className="composer-note">
-              <span>支持截图以图搜库 · 回答均附引用来源</span>
-              <span className="webtag">默认不联网；知识库未命中时会先询问是否联网检索</span>
-            </div>
-          </div>
-        </div>
+        <Chat messages={messages} welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }} />
+        <Composer ctxPct={ctxPct} />
       </main>
-
-      {/* ======== TRACE PANEL ======== */}
-      <aside className="trace scroll">
-        <div className="trace-inner">
-          <div className="fig">
-            <div className="fig-label"><span className="fig-no">01</span><span>检索轨迹</span></div>
-            <div className="fig-sub">Retrieval Trace · 实时</div>
-            <div className="steps" id="steps">
-              {IDLE_STEPS.map((s, i) => (
-                <div className="step idle" key={s.en}>
-                  <div className="st-ic">0{i + 1}</div>
-                  <div className="st-body">
-                    <div className="st-name">{s.name}</div>
-                    <div className="st-en">{s.en}</div>
-                  </div>
-                  <div className="st-time">—</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="fig">
-            <div className="fig-label"><span className="fig-no">02</span><span>命中来源</span></div>
-            <div className="fig-sub">Sources · 按相关度排序</div>
-            <div id="srcList">
-              <div className="src-empty">暂无检索记录。<br />发起提问后，此处列出命中的知识块与相关度。</div>
-            </div>
-          </div>
-          <div className="fig">
-            <div className="fig-label"><span className="fig-no">03</span><span>运行指标</span></div>
-            <div className="fig-sub">Index Vitals · 本轮</div>
-            <div className="vitals">
-              <div className="v-row"><span className="k">向量模型</span><span>bge-local · 512d</span></div>
-              <div className="v-row"><span className="k">重排模型</span><span>cross-encoder</span></div>
-              <div className="v-row"><span className="k">本轮召回</span><span id="vRecall">—</span></div>
-              <div className="v-row"><span className="k">本轮耗时</span><span id="vTime">—</span></div>
-              <div className="v-row"><span className="k">生成速率</span><span id="vTok">—</span></div>
-              <div className="v-row"><span className="k">联网回退</span><span className="green" id="vWeb">待命</span></div>
-            </div>
-          </div>
-          <div className="fig">
-            <div className="fig-label"><span className="fig-no">04</span><span>后台任务</span></div>
-            <div className="fig-sub">Background Tasks · 活跃 2s / 空闲 8s 自动刷新</div>
-            <div id="taskList">
-              <div className="src-empty">暂无后台任务。<br />后台执行的问题会在此显示状态与步骤进度。</div>
-            </div>
-          </div>
-        </div>
-      </aside>
+      <TracePanel />
+      <div className={`toast${toast ? " show" : ""}`} style={toast?.error ? { background: "var(--red)" } : undefined}>
+        {toast?.msg}
+      </div>
     </div>
   );
 }
