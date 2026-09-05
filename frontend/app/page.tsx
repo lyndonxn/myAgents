@@ -83,6 +83,19 @@ export default function Home() {
   const streamFailedFlag = useRef(false);
   const traceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
+  /* W9：左侧栏收起/展开（记忆） */
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const onToggleRail = useCallback(() => {
+    setRailCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("myagents-rail", next ? "collapsed" : "open");
+      } catch (_e) {
+        /* 隐私模式等场景忽略 */
+      }
+      return next;
+    });
+  }, []);
   const { confirm: uiConfirm, confirmDialog } = useConfirm();
   /* ----- W6-S7 设置 ----- */
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -648,6 +661,15 @@ export default function Home() {
     return () => clearInterval(t);
   }, [refreshStatus]);
 
+  /* ----- W9：恢复侧栏收起记忆 ----- */
+  useEffect(() => {
+    try {
+      setRailCollapsed(localStorage.getItem("myagents-rail") === "collapsed");
+    } catch (_e) {
+      /* 忽略 */
+    }
+  }, []);
+
   /* ----- ⌘K 新建会话 ----- */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -721,12 +743,14 @@ export default function Home() {
   };
 
   return (
-    <div className="app">
+    <div className={`app${railCollapsed ? " rail-collapsed" : ""}`}>
       <TopBar
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
         indexState={indexState}
         memCount={memCount}
+        railCollapsed={railCollapsed}
+        onToggleRail={onToggleRail}
         onSwitchWorkspace={onSwitchWorkspace}
         onResetSession={onResetSession}
         onOpenSettings={() => openSettings("model")}

@@ -9,6 +9,8 @@ export default function TopBar(props: {
   activeWorkspace: string;
   indexState: IndexState;
   memCount: number;
+  railCollapsed: boolean;
+  onToggleRail: () => void;
   onSwitchWorkspace: (id: string) => void;
   onResetSession: () => void;
   onOpenSettings: () => void;
@@ -16,6 +18,15 @@ export default function TopBar(props: {
 }) {
   return (
     <header className="topbar">
+      <button
+        className="rail-toggle"
+        title={props.railCollapsed ? "展开侧栏" : "收起侧栏"}
+        aria-label={props.railCollapsed ? "展开侧栏" : "收起侧栏"}
+        type="button"
+        onClick={props.onToggleRail}
+      >
+        {props.railCollapsed ? "›" : "‹"}
+      </button>
       <div className="brand">
         <span className="logo">M</span>
         <span className="wordmark">MYAGENTS</span>
