@@ -26,24 +26,20 @@ function mdCore(text: string): string {
     .replace(/\n/g, "<br>");
 }
 
-/* 末段「参考来源」拆分（W6-S8 修复：折叠改为真实 JSX 元素渲染——
- * React 19 每次重渲染都会重置 dangerouslySetInnerHTML 子树，折叠放进字符串里会被
- * 轮询重渲染反复打回关闭态，用户永远展开不了。main=正文，tail=来源清单，count=条数） */
-export function splitAnswerHtml(text: string): { main: string; tail: string; count: number } {
+/* W7 追加修复：剥离正文末尾的「参考来源」段——来源已在「引用来源」证据卡展示，
+ * 正文不再重复渲染（用户明确要求）。兼容 **加粗**、中英冒号、# 号等修饰的任意顺序，
+ * 例如「**参考来源**：」「参考来源：」「### 参考来源」。返回剥离后的正文。 */
+export function stripRefSection(text: string): { main: string } {
   const raw = String(text || "");
-  const re = /(?:^|\n)[ \t]*#{0,4}[ \t]*\*{0,2}参考来源[:：]?\*{0,2}[ \t]*(?=\n|$)/g;
+  const re = /(?:^|\n)[ \t]*#{0,4}[ \t]*[-*• \t]*参考来源[ \t]*[:：\*# \t]*(?=\n|$)/g;
   let last = -1;
   let m2: RegExpExecArray | null;
   while ((m2 = re.exec(raw))) last = m2.index;
   if (last >= 0) {
     const main = raw.slice(0, last);
-    const tail = raw.slice(last);
-    if (main.trim() && tail.trim()) {
-      const count = (tail.match(/^\s*\[\d+\]/gm) || []).length;
-      return { main: mdCore(main), tail: mdCore(tail), count };
-    }
+    if (main.trim()) return { main: mdCore(main) };
   }
-  return { main: mdCore(raw), tail: "", count: 0 };
+  return { main: mdCore(raw) };
 }
 
 /* 流式中的正文（不打折叠，参考来源行按普通文本渲染） */

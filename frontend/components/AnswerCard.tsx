@@ -7,7 +7,7 @@
 
 import { useRef, useState } from "react";
 import type { FeedbackValue, MetricsInfo, PlanInfo, SourceDetail } from "@/lib/api";
-import { esc, splitAnswerHtml } from "@/lib/markdown";
+import { esc, stripRefSection } from "@/lib/markdown";
 
 export interface AnswerData {
   respNo: number;
@@ -47,7 +47,6 @@ export default function AnswerCard(props: {
   const { data } = props;
   const key = data.messageId || "";
   const [evOpen, setEvOpen] = useState(() => EV_FOLD_OPEN.get(key) ?? false);
-  const [tailOpen, setTailOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const webUsed = !!(data.metrics?.degraded || data.metrics?.web_used);
@@ -108,7 +107,8 @@ export default function AnswerCard(props: {
     if (fu?.dataset.q) props.onQuickAsk(fu.dataset.q);
   };
 
-  const split = splitAnswerHtml(data.answer);
+  /* 来源已在「引用来源」证据卡展示：正文剥离末尾参考来源段（不重复渲染） */
+  const { main } = stripRefSection(data.answer);
   const planSteps = data.plan?.steps || [];
   const planHtml = planSteps.length ? (
     <div className="block note show">
@@ -200,23 +200,7 @@ export default function AnswerCard(props: {
           {webState}
           {/* W6-S8 修复：参考来源折叠为受控 JSX 元素——放进 innerHTML 字符串会被轮询重渲染重置，
               非受控 details 也会被 React 19 重渲染合上；open 由 state 显式管理才稳定 */}
-          <div className="block lead show" dangerouslySetInnerHTML={{ __html: split.main }} />
-          {split.count > 0 && (
-            <details
-              className="ref-fold"
-              open={tailOpen}
-              onToggle={(e) => {
-                const v = (e.target as HTMLDetailsElement).open;
-                if (v !== tailOpen) setTailOpen(v);
-              }}
-            >
-              <summary>
-                参考来源（{split.count} 条）
-                <span className="rf-caret">▶</span>
-              </summary>
-              <div className="rf-body" dangerouslySetInnerHTML={{ __html: split.tail }} />
-            </details>
-          )}
+          <div className="block lead show" dangerouslySetInnerHTML={{ __html: main }} />
           {planHtml}
           {/* L2 证据折叠 */}
           {data.sources.length > 0 && (

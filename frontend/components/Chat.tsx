@@ -5,7 +5,7 @@
 
 import { useLayoutEffect, useRef } from "react";
 import type { FeedbackValue, MetricsInfo, PlanInfo, SourceDetail } from "@/lib/api";
-import { esc, simpleHtml } from "@/lib/markdown";
+import { esc, stripRefSection } from "@/lib/markdown";
 import AnswerCard, { type AnswerData } from "@/components/AnswerCard";
 
 export interface AgentStreamMsg {
@@ -187,7 +187,7 @@ function StreamCard({ msg, handlers }: { msg: AgentStreamMsg; handlers: ChatHand
               <div
                 className="block lead show"
                 dangerouslySetInnerHTML={{
-                  __html: simpleHtml(msg.shown) + '<span class="stream-cursor" aria-hidden="true"></span>',
+                  __html: stripRefSection(msg.shown).main + '<span class="stream-cursor" aria-hidden="true"></span>',
                 }}
               />
             </>
