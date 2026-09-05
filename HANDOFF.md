@@ -114,6 +114,14 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W10 记录（2026-09-06，骑缝圆形收起/展开钮）
+
+- **规格**（用户提供）：20×20 白底圆钮、0.5px 描边 #c9c8c4、8px 单线 chevron（stroke 1.2 圆角线帽）、骑跨侧栏/内容区分界线垂直居中、hover #888→#000/描边加深 150ms、常显；点击 200ms ease-out 宽度过渡、chevron 用 rotate(180deg) 与宽度同步（单图标不换图）；收起=侧栏 0 宽完全隐藏、按钮停留原位 chevron 朝右；快捷键 Cmd/Ctrl+\；localStorage 持久化；封装 `SidebarEdgeToggle` 组件参数化 side（右侧面板后续 side="right" 复用，镜像样式已预留）；不引入组件库/SVG 内联/无阴影渐变模糊/不改侧栏内部结构。
+- **实现**：新增 `components/SidebarEdgeToggle.tsx`（挂载于 main.chat 首位——.chat 为定位上下文，左缘即分界线；absolute left:-10px 骑跨，宽窄自适应随栅格动画同步移动）；globals.css 增加 `.edge-toggle/.edge-left/.edge-right` 样式与 `.app{transition:grid-template-columns 200ms}`、`.rail{overflow:hidden;transition:opacity/visibility}`（收起时内容淡出防溢出）；快捷键 Cmd/Ctrl+\ 加入现有 keydown 监听；移除 W9 输入区底部收起钮。
+- **关键坑（同日调试）**：onToggleRail 的 state updater 内含 localStorage 副作用 → React 并发渲染重复调用 updater 导致 className 应用被吞（表现为状态翻转但布局延迟不更新）。修复：updater 纯函数化 + 持久化移入 useEffect（依赖 railCollapsed）。
+- **验证**：typecheck/build/197 全绿；8791 隔离实例冒烟——展开态骑缝（btn x=242 骑跨 252 分界线）、点击收起（类名即时应用并稳定、rail 宽 0）、快捷键展开（rail 252、localStorage 正确）、截图核对。
+- **涉及文件**：frontend/components/{SidebarEdgeToggle(新),Composer,Chat}.tsx、frontend/app/{page.tsx,globals.css}。
+
 ## W9 记录（2026-09-05，左侧栏收起/展开）
 
 - **内容**：左侧栏支持一键收起/展开——切换按钮位于**输入区操作行最左**（用户反馈调整：不放顶栏，顶栏保留 logo 等原样），圆形图标钮（侧栏可见时 ‹ 收起 / 收起时 › 展开）；栅格列宽变量化（`--rail-w`），收起时 `--rail-w:0px` + `.rail{visibility:hidden}`（**用 visibility 保留栅格占位**：display:none 会把侧栏移出栅格导致聊天区补位到 0 宽列、与右面板重叠——实测抓出后修正）；聊天区自动占满释放宽度；状态存 localStorage（prerender 安全：挂载后恢复）。窄屏（≤840px）侧栏本就隐藏，不受影响。

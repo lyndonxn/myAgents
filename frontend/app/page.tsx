@@ -24,6 +24,7 @@ import TopBar, { type IndexState } from "@/components/TopBar";
 import Rail, { type KbSummary } from "@/components/Rail";
 import Chat, { type AgentStreamMsg, type ChatHandlers, type MsgVM } from "@/components/Chat";
 import Composer, { type PendingImage } from "@/components/Composer";
+import SidebarEdgeToggle from "@/components/SidebarEdgeToggle";
 import TracePanel, { type SourceVM, type TraceStepVM, type VitalsVM } from "@/components/TracePanel";
 import AnswerDetailModal from "@/components/AnswerDetailModal";
 import SettingsModal, { type SettingsTab } from "@/components/SettingsModal";
@@ -87,16 +88,16 @@ export default function Home() {
   /* W9：左侧栏收起/展开（记忆） */
   const [railCollapsed, setRailCollapsed] = useState(false);
   const onToggleRail = useCallback(() => {
-    setRailCollapsed((v) => {
-      const next = !v;
-      try {
-        localStorage.setItem("myagents-rail", next ? "collapsed" : "open");
-      } catch (_e) {
-        /* 隐私模式等场景忽略 */
-      }
-      return next;
-    });
+    setRailCollapsed((v) => !v);
   }, []);
+  /* 持久化副作用放 effect（updater 必须纯函数） */
+  useEffect(() => {
+    try {
+      localStorage.setItem("myagents-rail", railCollapsed ? "collapsed" : "open");
+    } catch (_e) {
+      /* 隐私模式等场景忽略 */
+    }
+  }, [railCollapsed]);
   const { confirm: uiConfirm, confirmDialog } = useConfirm();
   /* ----- W6-S7 设置 ----- */
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -679,10 +680,15 @@ export default function Home() {
         e.preventDefault();
         if (!busy) void createSession();
       }
+      // W10：Cmd/Ctrl + \ 切换侧栏
+      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+        e.preventDefault();
+        onToggleRail();
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [busy, createSession]);
+  }, [busy, createSession, onToggleRail]);
 
   /* ----- W6-S6：后台任务轮询（活跃 2s / 空闲 8s，页面隐藏降频）----- */
   useEffect(() => {
@@ -770,6 +776,12 @@ export default function Home() {
         onManageKb={() => openSettings("kb")}
       />
       <main className="chat">
+        <SidebarEdgeToggle
+          side="left"
+          collapsed={railCollapsed}
+          onToggle={onToggleRail}
+          title={railCollapsed ? "展开侧栏 (⌘\)" : "收起侧栏 (⌘\)"}
+        />
         <Chat
           messages={messages}
           welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }}
@@ -785,8 +797,6 @@ export default function Home() {
           value={inputValue}
           busy={busy}
           pendingImage={pendingImage}
-          railCollapsed={railCollapsed}
-          onToggleRail={onToggleRail}
           onChange={setInputValue}
           onSubmit={() => void onSend()}
           onStop={onStop}

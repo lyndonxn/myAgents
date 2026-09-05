@@ -801,9 +801,28 @@ body{
 .actionbtn.danger{background:var(--red);border-color:var(--red);color:#fff;}
 .actionbtn.danger:hover{background:#B91C1C;border-color:#B91C1C;}
 
-/* ============ W9 · 左侧栏收起/展开 ============ */
+/* ============ W10 · 侧栏收起/展开（骑缝圆钮） ============ */
+.app{transition:grid-template-columns 200ms ease-out;}
 .app.rail-collapsed{--rail-w:0px;}
-/* 用 visibility 而非 display：保留栅格占位，聊天区/右侧面板列位不变 */
-.app.rail-collapsed .rail{visibility:hidden;}
-.iconbtn.rail-toggle{width:32px;height:32px;min-width:32px;}
-.iconbtn.rail-toggle.collapsed svg{transform:rotate(180deg);}
+/* visibility 保留栅格占位（聊天区/右侧面板列位不变）；opacity 与宽度同步淡出 */
+.app .rail{overflow:hidden;transition:opacity 200ms ease-out,visibility 200ms ease-out;}
+.app.rail-collapsed .rail{visibility:hidden;opacity:0;}
+/* 骑缝圆钮：20×20 白底 0.5px 描边，骑跨分界线，z 高于两栏 */
+.edge-toggle{
+  position:absolute;top:50%;width:20px;height:20px;border-radius:50%;
+  background:#ffffff;border:0.5px solid #c9c8c4;
+  display:grid;place-items:center;cursor:pointer;padding:0;z-index:20;
+  transition:border-color 150ms ease-out;
+}
+.edge-toggle svg{
+  width:8px;height:8px;stroke:#888888;
+  transition:stroke 150ms ease-out,transform 200ms ease-out;
+}
+.edge-toggle:hover{border-color:#999999;}
+.edge-toggle:hover svg{stroke:#000000;}
+.edge-left{left:-10px;transform:none;}
+.edge-left.collapsed svg{transform:rotate(180deg);}
+/* side="right"（右侧信息面板复用）：镜像几何与转向 */
+.edge-right{right:-10px;transform:none;}
+.edge-right svg{transform:scaleX(-1);}
+.edge-right.collapsed svg{transform:scaleX(-1) rotate(180deg);}
