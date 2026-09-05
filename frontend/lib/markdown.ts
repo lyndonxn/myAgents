@@ -26,8 +26,10 @@ function mdCore(text: string): string {
     .replace(/\n/g, "<br>");
 }
 
-/* 末段「参考来源」清单默认收进 <details class="ref-fold">（legacy renderMd 语义） */
-export function answerHtml(text: string): string {
+/* 末段「参考来源」拆分（W6-S8 修复：折叠改为真实 JSX 元素渲染——
+ * React 19 每次重渲染都会重置 dangerouslySetInnerHTML 子树，折叠放进字符串里会被
+ * 轮询重渲染反复打回关闭态，用户永远展开不了。main=正文，tail=来源清单，count=条数） */
+export function splitAnswerHtml(text: string): { main: string; tail: string; count: number } {
   const raw = String(text || "");
   const re = /(?:^|\n)[ \t]*#{0,4}[ \t]*\*{0,2}参考来源[:：]?\*{0,2}[ \t]*(?=\n|$)/g;
   let last = -1;
@@ -38,11 +40,11 @@ export function answerHtml(text: string): string {
     const tail = raw.slice(last);
     if (main.trim() && tail.trim()) {
       const count = (tail.match(/^\s*\[\d+\]/gm) || []).length;
-      return (
-        mdCore(main) +
-        `<details class="ref-fold"><summary>参考来源${count ? `（${count} 条）` : ""}<span class="rf-caret">▶</span></summary><div class="rf-body">${mdCore(tail)}</div></details>`
-      );
+      return { main: mdCore(main), tail: mdCore(tail), count };
     }
   }
-  return mdCore(raw);
+  return { main: mdCore(raw), tail: "", count: 0 };
 }
+
+/* 流式中的正文（不打折叠，参考来源行按普通文本渲染） */
+export const simpleHtml = mdCore;
