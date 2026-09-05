@@ -1,21 +1,18 @@
 "use client";
 
-/* 聊天区：INTRO / 用户气泡 / 历史回答 / 流式回答卡（thinking→streaming→done 三相，W3 对齐）。
- * S3 为流式管线与简化卡面（纯文本 + 光标），S4 把 done 相升级为完整答案卡。 */
+/* 聊天区：INTRO / 用户气泡 / 回答卡（统一 agent-stream 模型，三相 thinking→streaming→done）。
+ * done 相由 AnswerCard 呈现（W1–W4 全部能力）；S3 打字机与滚动跟随保留。 */
 
 import { useLayoutEffect, useRef } from "react";
-import type { MetricsInfo, PlanInfo, SourceDetail } from "@/lib/api";
-
-export type MsgVM =
-  | { kind: "intro" }
-  | { kind: "user"; text: string }
-  | { kind: "agent"; text: string }
-  | AgentStreamMsg;
+import type { FeedbackValue, MetricsInfo, PlanInfo, SourceDetail } from "@/lib/api";
+import { answerHtml } from "@/lib/markdown";
+import AnswerCard, { type AnswerData } from "@/components/AnswerCard";
 
 export interface AgentStreamMsg {
-  kind: "agent-stream";
+  kind: "stream";
   key: string;
   phase: "thinking" | "streaming" | "done";
+  /** 文本载体：thinking 为空、streaming 为已渲染片段、done 为全文 */
   shown: string;
   stageName: string;
   sources: string[];
@@ -24,17 +21,36 @@ export interface AgentStreamMsg {
   metrics?: MetricsInfo;
   messageId?: string;
   question: string;
+  feedback: FeedbackValue;
   followups?: string[];
+  respNo?: number;
 }
 
-export default function Chat(props: { messages: MsgVM[]; welcomeDocs?: { docCount: string; chunks: string } }) {
+export type MsgVM =
+  | { kind: "intro" }
+  | { kind: "user"; text: string }
+  | { kind: "stream"; data: AgentStreamMsg };
+
+export interface ChatHandlers {
+  onCopy: (d: AnswerData) => void;
+  onShare: (d: AnswerData) => void;
+  onRegenerate: (d: AnswerData) => void;
+  onFeedback: (messageId: string, value: Exclude<FeedbackValue, "">) => void;
+  onQuickAsk: (text: string) => void;
+  onOpenDetail: (messageId: string) => void;
+}
+
+export default function Chat(props: {
+  messages: MsgVM[];
+  welcomeDocs?: { docCount: string; chunks: string };
+  handlers: ChatHandlers;
+}) {
   const msgs = props.messages;
   const showWelcome = msgs.length === 1 && msgs[0].kind === "intro";
   const docs = props.welcomeDocs ?? { docCount: "—", chunks: "—" };
   const scRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
 
-  // 用户上滚则停止跟随；回到底部恢复自动跟随（W3 行为对齐）
   useLayoutEffect(() => {
     if (pinnedRef.current && scRef.current) scRef.current.scrollTop = scRef.current.scrollHeight;
   });
@@ -114,28 +130,29 @@ export default function Chat(props: { messages: MsgVM[]; welcomeDocs?: { docCoun
                 </div>
               </div>
             );
-          if (m.kind === "agent-stream") return <AgentStreamCard msg={m} key={m.key} />;
-          return (
-            <div className="msg agent" key={`a-${i}`}>
-              <div className="avatar">M</div>
-              <div className="m-main">
-                <div className="msg-label">
-                  <span>MYAGENTS</span>
-                  <span className="role-tag">RAG · PLANNER · TOOLS</span>
-                </div>
-                <div className="card">
-                  <div className="block lead show">{m.text}</div>
-                </div>
-              </div>
-            </div>
-          );
+          return <StreamCard msg={m.data} handlers={props.handlers} key={m.data.key} />;
         })}
       </div>
     </div>
   );
 }
 
-function AgentStreamCard({ msg }: { msg: AgentStreamMsg }) {
+function StreamCard({ msg, handlers }: { msg: AgentStreamMsg; handlers: ChatHandlers }) {
+  if (msg.phase === "done") {
+    const data: AnswerData = {
+      respNo: msg.respNo ?? 1,
+      question: msg.question,
+      answer: msg.shown,
+      messageId: msg.messageId,
+      sources: msg.sources,
+      sourcesDetail: msg.sourcesDetail,
+      plan: msg.plan,
+      metrics: msg.metrics,
+      feedback: msg.feedback,
+      followups: msg.followups,
+    };
+    return <AnswerCard data={data} onCopy={handlers.onCopy} onShare={handlers.onShare} onRegenerate={handlers.onRegenerate} onFeedback={handlers.onFeedback} onQuickAsk={handlers.onQuickAsk} onOpenDetail={handlers.onOpenDetail} />;
+  }
   return (
     <div className="msg agent">
       <div className="avatar">M</div>
@@ -158,13 +175,14 @@ function AgentStreamCard({ msg }: { msg: AgentStreamMsg }) {
                 <span>正在生成答案 · 引用 {msg.sources.length} 段内容</span>
                 <i className="gen-line" aria-hidden="true" />
               </div>
-              <div className="block lead show">
-                {msg.shown}
-                <span className="stream-cursor" aria-hidden="true" />
-              </div>
+              <div
+                className="block lead show"
+                dangerouslySetInnerHTML={{
+                  __html: answerHtml(msg.shown) + '<span class="stream-cursor" aria-hidden="true"></span>',
+                }}
+              />
             </>
           )}
-          {msg.phase === "done" && <div className="block lead show">{msg.shown}</div>}
         </div>
       </div>
     </div>

@@ -1,9 +1,9 @@
 "use client";
 
-/* W6-S2 根组件：会话/工作区状态层 + 状态轮询 + 心跳。
- * 后续切片：S3 发送/流式 → S4 答案卡 → S5 输入区行为 → S6 面板 → S7 设置。 */
+/* W6 根组件。S3 流式聊天 + S4 答案卡全家桶接线。
+ * 后续：S5 图片上传/拖入/语音 → S6 面板 → S7 设置 → S8 收尾切换。 */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   askStream,
@@ -15,9 +15,10 @@ import {
 } from "@/lib/api";
 import TopBar, { type IndexState } from "@/components/TopBar";
 import Rail, { type KbSummary } from "@/components/Rail";
-import Chat, { type AgentStreamMsg, type MsgVM } from "@/components/Chat";
+import Chat, { type AgentStreamMsg, type ChatHandlers, type MsgVM } from "@/components/Chat";
 import Composer from "@/components/Composer";
 import TracePanel from "@/components/TracePanel";
+import AnswerDetailModal from "@/components/AnswerDetailModal";
 
 const INTRO: MsgVM = { kind: "intro" };
 
@@ -39,7 +40,7 @@ export default function Home() {
   const [ctxPct, setCtxPct] = useState(0);
   const [toast, setToast] = useState<{ msg: string; error: boolean } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /* ----- W6-S3 流式发送状态 ----- */
+  /* 流式发送状态 */
   const [inputValue, setInputValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [, setTick] = useState(0);
@@ -52,12 +53,23 @@ export default function Home() {
     finished: boolean;
     active: boolean;
   } | null>(null);
+  const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
 
   const showToast = useCallback((msg: string, error = false) => {
     setToast({ msg, error });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2600);
   }, []);
+
+  const findMsg = useCallback(
+    (messageId: string): AgentStreamMsg | null => {
+      for (const m of messages) {
+        if (m.kind === "stream" && String(m.data.messageId) === String(messageId)) return m.data;
+      }
+      return null;
+    },
+    [messages],
+  );
 
   /* 回答落库后仅刷新列表（标题/计数）；消息保留在内存，不做整段替换（避免 legacy 的交换丢答案问题） */
   const refreshSessionsList = useCallback(async () => {
@@ -69,7 +81,138 @@ export default function Home() {
     }
   }, [activeWorkspace]);
 
-  /* ----- W6-S3：流式问答（队列式播放器：delta 进缓冲、打字机节奏渲染，done 后收 followups）----- */
+  /* ----- 会话 ----- */
+  const openSession = useCallback(
+    async (id: string, known?: SessionInfo[]) => {
+      setCurrentSession(id);
+      try {
+        const list = known ?? sessions;
+        if (!list.some((s) => s.id === id)) {
+          const sd = await api.sessions(activeWorkspace);
+          setSessions(sd.sessions);
+        }
+        const data = await api.sessionMessages(id);
+        let lastQ = "";
+        setMessages([
+          INTRO,
+          ...data.messages.map((m): MsgVM => {
+            if (m.role === "user") {
+              lastQ = m.content;
+              return { kind: "user", text: m.content };
+            }
+            return {
+              kind: "stream",
+              data: {
+                kind: "stream",
+                key: `h${m.id ?? "x"}-${++seqRef.current}`,
+                phase: "done",
+                shown: m.content,
+                stageName: "",
+                sources: m.sources || [],
+                sourcesDetail: m.sources_detail || [],
+                plan: m.plan,
+                metrics: m.metrics,
+                messageId: m.id != null ? String(m.id) : undefined,
+                question: lastQ,
+                feedback: m.feedback || "",
+              },
+            };
+          }),
+        ]);
+      } catch (e) {
+        showToast((e as Error).message || "加载会话失败", true);
+      }
+    },
+    [activeWorkspace, sessions, showToast],
+  );
+
+  const createSession = useCallback(
+    async (ws?: string) => {
+      const workspaceId = ws ?? activeWorkspace;
+      try {
+        const d = await api.createSession(workspaceId);
+        setSessions((prev) => [
+          { id: d.session_id, title: "新的会话", updated_at: new Date().toISOString(), message_count: 0 },
+          ...prev,
+        ]);
+        setMessages([INTRO]);
+        setCurrentSession(d.session_id);
+        return d.session_id;
+      } catch (e) {
+        showToast((e as Error).message || "新建会话失败", true);
+        return null;
+      }
+    },
+    [activeWorkspace, showToast],
+  );
+
+  const loadSessionsInto = useCallback(
+    async (workspaceId: string, preferred?: string) => {
+      const data = await api.sessions(workspaceId);
+      setSessions(data.sessions);
+      if (!data.sessions.length) {
+        await createSession(workspaceId);
+        return;
+      }
+      const id = preferred && data.sessions.some((s) => s.id === preferred) ? preferred : data.sessions[0].id;
+      await openSession(id, data.sessions);
+    },
+    [createSession, openSession],
+  );
+
+  const onDeleteSession = useCallback(
+    async (id: string) => {
+      if (busy) return;
+      const s = sessions.find((x) => x.id === id);
+      if (!s) return;
+      if (!confirm(`确定删除会话“${s.title}”吗？删除后无法恢复。`)) return;
+      try {
+        await api.deleteSession(id);
+        showToast("会话已删除");
+        const rest = sessions.filter((x) => x.id !== id);
+        setSessions(rest);
+        if (currentSession === id) {
+          if (rest.length) await openSession(rest[0].id, rest);
+          else await createSession();
+        }
+      } catch (e) {
+        showToast((e as Error).message || "删除失败", true);
+      }
+    },
+    [busy, sessions, currentSession, openSession, createSession, showToast],
+  );
+
+  const onResetSession = useCallback(async () => {
+    if (busy || !currentSession) return;
+    if (!confirm("确定清空当前会话的对话记录吗？可同时删除该会话长期记忆，删除后无法恢复。")) return;
+    try {
+      await api.resetSession(currentSession);
+    } catch (_e) {
+      /* 后端离线也照常清空本地视图 */
+    }
+    setMessages([INTRO]);
+    setMemCount(0);
+  }, [busy, currentSession]);
+
+  /* ----- 工作区 ----- */
+  const onSwitchWorkspace = useCallback(
+    async (id: string) => {
+      if (busy) return;
+      const previous = activeWorkspace;
+      try {
+        await api.switchWorkspace(id);
+        setActiveWorkspace(id);
+        setMessages([INTRO]);
+        await loadSessionsInto(id);
+      } catch (e) {
+        showToast((e as Error).message || "切换失败", true);
+        setActiveWorkspace(previous);
+      }
+    },
+    [busy, activeWorkspace, loadSessionsInto, showToast],
+  );
+
+  /* ----- 流式问答（队列式播放器：delta 进缓冲、打字机节奏渲染，done 后收 followups）----- */
   const onSend = useCallback(
     async (textArg?: string) => {
       if (busy) {
@@ -86,7 +229,7 @@ export default function Home() {
       setBusy(true);
       const key = `s${++seqRef.current}`;
       const msg: AgentStreamMsg = {
-        kind: "agent-stream",
+        kind: "stream",
         key,
         phase: "thinking",
         shown: "",
@@ -94,8 +237,9 @@ export default function Home() {
         sources: [],
         sourcesDetail: [],
         question: text,
+        feedback: "",
       };
-      setMessages((prev) => [...prev, { kind: "user", text }, msg]);
+      setMessages((prev) => [...prev, { kind: "user", text }, { kind: "stream", data: msg }]);
       const controller = new AbortController();
       controllerRef.current = controller;
       let streamFailed = false;
@@ -170,18 +314,31 @@ export default function Home() {
         msg.phase = "done";
         setMessages((prev) => {
           const arr = [...prev];
-          if (arr[arr.length - 1] === msg && !msg.shown) arr.pop();
+          const last = arr[arr.length - 1];
+          if (last.kind === "stream" && last.data === msg && !msg.shown) arr.pop();
           return arr;
         });
         setMessages((prev) => [
           ...prev,
-          { kind: "agent", text: aborted ? "思考已停止，本次回答已中断。" : `请求失败：${(e as Error).message}` },
+          {
+            kind: "stream",
+            data: {
+              kind: "stream",
+              key: `e${++seqRef.current}`,
+              phase: "done",
+              shown: aborted ? "思考已停止，本次回答已中断。" : `请求失败：${(e as Error).message}`,
+              stageName: "",
+              sources: [],
+              sourcesDetail: [],
+              question: "",
+              feedback: "",
+            },
+          },
         ]);
         if (e instanceof ModelNotConfiguredError) showToast(`${e.message}（设置面板 S7 迁移）`, true);
       } finally {
         controllerRef.current = null;
         setBusy(false);
-        // 真失败不刷新会话列表（错误卡未落库）；中断/成功刷新列表标题与计数，消息留在内存不换（无 legacy 交换问题）
         if (!streamFailed) {
           void refreshSessionsList();
           setMemCount((m) => m + 1);
@@ -195,126 +352,75 @@ export default function Home() {
     controllerRef.current?.abort();
   }, []);
 
-  /* ----- 会话 ----- */
-  const openSession = useCallback(
-    async (id: string, known?: SessionInfo[]) => {
-      setCurrentSession(id);
-      try {
-        const list = known ?? sessions;
-        if (!list.some((s) => s.id === id)) {
-          const sd = await api.sessions(activeWorkspace);
-          setSessions(sd.sessions);
+  /* ----- 答案卡 handlers（S4）----- */
+  const handlers: ChatHandlers = useMemo(
+    () => ({
+      onCopy: async (d) => {
+        try {
+          await navigator.clipboard.writeText(d.answer);
+          showToast("回答已复制");
+        } catch (_e) {
+          showToast("复制失败，请检查浏览器权限", true);
         }
-        const data = await api.sessionMessages(id);
-        let lastQ = "";
-        setMessages([
-          INTRO,
-          ...data.messages.map((m): MsgVM => {
-            if (m.role === "user") {
-              lastQ = m.content;
-              return { kind: "user", text: m.content };
-            }
-            return { kind: "agent", text: m.content };
-          }),
-        ]);
-      } catch (e) {
-        showToast((e as Error).message || "加载会话失败", true);
-      }
-    },
-    [activeWorkspace, sessions, showToast],
-  );
-
-  const createSession = useCallback(
-    async (ws?: string) => {
-      const workspaceId = ws ?? activeWorkspace;
-      try {
-        const d = await api.createSession(workspaceId);
-        setSessions((prev) => [
-          { id: d.session_id, title: "新的会话", updated_at: new Date().toISOString(), message_count: 0 },
-          ...prev,
-        ]);
-        setMessages([INTRO]);
-        setCurrentSession(d.session_id);
-        return d.session_id;
-      } catch (e) {
-        showToast((e as Error).message || "新建会话失败", true);
-        return null;
-      }
-    },
-    [activeWorkspace, showToast],
-  );
-
-  const loadSessionsInto = useCallback(
-    async (workspaceId: string, preferred?: string) => {
-      const data = await api.sessions(workspaceId);
-      setSessions(data.sessions);
-      if (!data.sessions.length) {
-        await createSession(workspaceId);
-        return;
-      }
-      const id = preferred && data.sessions.some((s) => s.id === preferred) ? preferred : data.sessions[0].id;
-      await openSession(id, data.sessions);
-    },
-    [createSession, openSession],
-  );
-
-  const onNewSession = useCallback(async () => {
-    await createSession();
-  }, [createSession]);
-
-  const onDeleteSession = useCallback(
-    async (id: string) => {
-      if (busy) return;
-      const s = sessions.find((x) => x.id === id);
-      if (!s) return;
-      if (!confirm(`确定删除会话“${s.title}”吗？删除后无法恢复。`)) return;
-      try {
-        await api.deleteSession(id);
-        showToast("会话已删除");
-        const rest = sessions.filter((x) => x.id !== id);
-        setSessions(rest);
-        if (currentSession === id) {
-          if (rest.length) await openSession(rest[0].id, rest);
-          else await createSession();
+      },
+      onShare: async (d) => {
+        const payload = d.question ? `${d.question}\n\n${d.answer}` : d.answer;
+        if (navigator.share) {
+          try {
+            await navigator.share({ title: "MYAGENTS 回答", text: payload });
+            return;
+          } catch (_e) {
+            /* 用户取消 → 复制兜底 */
+          }
         }
-      } catch (e) {
-        showToast((e as Error).message || "删除失败", true);
-      }
-    },
-    [busy, sessions, currentSession, openSession, createSession, showToast],
+        try {
+          await navigator.clipboard.writeText(payload);
+          showToast("回答已复制，可粘贴分享");
+        } catch (_e) {
+          showToast("分享失败，请检查浏览器权限", true);
+        }
+      },
+      onRegenerate: (d) => {
+        if (busy || !d.question) return;
+        void onSend(d.question);
+      },
+      onFeedback: async (messageId, value) => {
+        try {
+          await api.feedback(Number(messageId), value);
+          const target = findMsg(messageId);
+          if (target) target.feedback = value;
+          setTick((t) => t + 1);
+          showToast("感谢反馈");
+        } catch (_e) {
+          showToast("反馈保存失败", true);
+        }
+      },
+      onQuickAsk: (text) => {
+        void onSend(text);
+      },
+      onOpenDetail: (messageId) => {
+        const m = findMsg(messageId);
+        if (!m) {
+          showToast("未找到该回答的详情", true);
+          return;
+        }
+        setDetailMsg(m);
+      },
+    }),
+    [busy, findMsg, onSend, showToast],
   );
 
-  const onResetSession = useCallback(async () => {
-    if (busy || !currentSession) return;
-    if (!confirm("确定清空当前会话的对话记录吗？可同时删除该会话长期记忆，删除后无法恢复。")) return;
-    try {
-      await api.resetSession(currentSession);
-    } catch (_e) {
-      /* 后端离线也照常清空本地视图 */
+  /* 回答序号（RESPONSE·NN）：直接在消息对象上标记，数量变化时重排 */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useMemo(() => {
+    let n = 0;
+    for (const m of messages) {
+      if (m.kind === "stream") m.data.respNo = ++n;
     }
-    setMessages([INTRO]);
-    setMemCount(0);
-  }, [currentSession]);
+    return messages.length;
+  }, [messages]);
 
-  /* ----- 工作区 ----- */
-  const onSwitchWorkspace = useCallback(
-    async (id: string) => {
-      if (busy) return;
-      const previous = activeWorkspace;
-      try {
-        await api.switchWorkspace(id);
-        setActiveWorkspace(id);
-        setMessages([INTRO]);
-        await loadSessionsInto(id);
-      } catch (e) {
-        showToast((e as Error).message || "切换失败", true);
-        setActiveWorkspace(previous);
-      }
-    },
-    [busy, activeWorkspace, loadSessionsInto, showToast],
-  );
-
-  /* ----- 初始化：workspaces → sessions → 首个会话 ----- */
+  /* ----- 初始化 ----- */
   useEffect(() => {
     (async () => {
       try {
@@ -327,7 +433,6 @@ export default function Home() {
         setKb((k) => ({ ...k, syncLabel: "连接中断" }));
       }
     })();
-    // 仅挂载时执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -380,12 +485,12 @@ export default function Home() {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        void createSession();
+        if (!busy) void createSession();
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [createSession]);
+  }, [busy, createSession]);
 
   const onToggleTheme = () => {
     const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -419,7 +524,7 @@ export default function Home() {
         onManageKb={() => showToast("知识库管理将在 S7 迁移", false)}
       />
       <main className="chat">
-        <Chat messages={messages} welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }} />
+        <Chat messages={messages} welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }} handlers={handlers} />
         <Composer
           ctxPct={ctxPct}
           value={inputValue}
@@ -430,6 +535,7 @@ export default function Home() {
         />
       </main>
       <TracePanel />
+      <AnswerDetailModal msg={detailMsg} onClose={() => setDetailMsg(null)} />
       <div className={`toast${toast ? " show" : ""}`} style={toast?.error ? { background: "var(--red)" } : undefined}>
         {toast?.msg}
       </div>
