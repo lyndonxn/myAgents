@@ -170,7 +170,6 @@ function StreamCard({ msg, handlers }: { msg: AgentStreamMsg; handlers: ChatHand
             <div className="retrieving">
               <span className="spinner" />
               <span>正在{msg.stageName || "规划与检索"}</span>
-              <div className="bar" />
             </div>
           )}
           {msg.phase === "streaming" && (

@@ -221,7 +221,7 @@ export default function AnswerCard(props: {
           {/* L2 证据折叠 */}
           {data.sources.length > 0 && (
             <div
-              className={`block retrieval-bar ev-bar-header${evOpen ? " open" : ""}`}
+              className={`block retrieval-bar ev-bar-header show${evOpen ? " open" : ""}`}
               data-evkey={key}
               onClick={toggleEv}
             >
