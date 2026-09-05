@@ -119,6 +119,7 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - **内容**：①证据区收回/展开——折叠改为**仅头部点击切换**（rb-top 加 role=button/aria-expanded/键盘支持，卡片与列表 stopPropagation，点内容不再误折叠）；②删除/清空类操作改**友好确认弹窗**——新增 `components/ConfirmDialog.tsx`（useConfirm hook：Promise 风格 `await confirm({title,message,confirmText,danger})`，danger 红色确认键，Esc/遮罩/取消关闭），替换会话删除/清空会话/记忆删除/清空记忆/日志清空共五处原生 confirm（egress 断言字符串「可同时删除该会话长期记忆」保留）；③起始四个快捷卡片接入点击发送（onQuickAsk → onSend，问题文本与 legacy QUICK_ACTIONS 一致）。**附带**：清理测试产生的空会话（仅删 title=新的会话且 0 消息）。
 - **验证**：typecheck/build/197 全绿；8787 冒烟——快捷卡片点击即发送（桩接住）、确认弹窗出现/取消不删/确认删除、折叠双向切换 + 卡片点击不折叠 + 全新加载默认收起、空会话清理后剩 3 个真实会话。
 - **涉及文件**：frontend/components/{AnswerCard,Chat,ConfirmDialog(新),SettingsModal}.tsx、frontend/app/page.tsx、frontend/app/globals.css。
+- **追加（同日回归核对）**：①补回 S5 重写时遗失的上下文竖轨（.ctx-rail 自 Composer 恢复，数据/配色逻辑保留）；②窄屏（≤840px）隐藏规则选择器提级为 `.chat .ctx-rail`（基础规则在 media 块之后同优先级覆盖导致隐藏失效）。**验证**：800px 三区全隐藏/1440px 竖轨显示、24 段渲染；197 全绿。
 
 ## W7 记录（2026-09-05，用户实测反馈三项 UI 精修）
 

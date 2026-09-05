@@ -115,6 +115,12 @@ export default function Composer(props: {
 
   return (
     <div className="composer">
+      {/* W6-S8 补回：上下文竖轨（S5 重写时遗失）——绝对定位锚定 .chat 左缘 */}
+      <div className="ctx-rail" id="ctxLine" title="上下文容量">
+        {Array.from({ length: segs }, (_, i) => (
+          <span key={i} className="seg" style={{ background: i < active ? color : "var(--line)" }} />
+        ))}
+      </div>
       <div className="composer-inner">
         <div className="img-preview" id="imgPreview" hidden={!props.pendingImage}>
           <img id="imgThumb" alt="待搜索图片" src={props.pendingImage?.dataUrl} />
