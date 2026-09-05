@@ -582,5 +582,150 @@ class EgressDefaultsTests(unittest.TestCase):
         print("✓ parse_opt_bool：None/bool/字符串归一化/非法值报错")
 
 
+class WebSettingsEgressSwitchTests(unittest.TestCase):
+    """G3 遗留项：设置面板三开关接入（CONFIG_FIELDS 白名单 + _config_view 透出 + webui 控件）。
+
+    全部离线：CONFIG_PATH/RUNTIME_PATH/ENV_PATH 在 setUp monkeypatch 到临时目录，
+    绝不读写用户 data/runtime.json 与 .env；_save_config/_config_view 用裸 Handler
+    （object.__new__）直测，agent 为最小 SimpleNamespace 桩（同 test_config_validation 用法）。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self._saved = {name: getattr(config_mod, name) for name in ("CONFIG_PATH", "RUNTIME_PATH", "ENV_PATH")}
+        config_mod.CONFIG_PATH = REPO / "config.yaml"  # 只读仓库配置
+        config_mod.RUNTIME_PATH = self.tmp / "runtime.json"
+        config_mod.ENV_PATH = self.tmp / ".env"
+
+    def tearDown(self) -> None:
+        for name, value in self._saved.items():
+            setattr(config_mod, name, value)
+        self._tmp.cleanup()
+
+    def bare_handler(self, raw: dict | None = None) -> tuple[Handler, Config]:
+        """裸 Handler + 最小 fake agent（config/reconfigure 桩），保存路径直测用。"""
+        handler = object.__new__(Handler)
+        cfg = Config(raw or {})
+        handler.agent = SimpleNamespace(config=cfg, reconfigure=lambda: None)
+        return handler, cfg
+
+    # ---------------- _config_view 透出 ----------------
+
+    def test_config_view_exposes_three_switches(self):
+        """_config_view 新增 tools/memory 节：三键值与 Config property 一致，既有节不回归。"""
+        handler, cfg = self.bare_handler({
+            "tools": {"kb_fallback_web": True},
+            "memory": {"long_term_enabled": True, "entities_enabled": False},
+        })
+        view = handler._config_view()
+        self.assertEqual(view["tools"], {"kb_fallback_web": True})
+        self.assertEqual(view["memory"], {"long_term_enabled": True, "entities_enabled": False})
+        self.assertIs(view["tools"]["kb_fallback_web"], cfg.kb_fallback_web)
+        self.assertIs(view["memory"]["long_term_enabled"], cfg.memory_long_term_enabled)
+        self.assertIs(view["memory"]["entities_enabled"], cfg.memory_entities_enabled)
+        # 既有节与键不回归（新键追加，不改既有键）
+        for section in ("llm", "retrieval", "vision"):
+            self.assertIn(section, view)
+        self.assertIn("api_key_masked", view["llm"])
+        self.assertIn("multi_query", view["retrieval"])
+        self.assertIn("configured", view["vision"])
+
+        print("✓ _config_view 透出 tools/memory 三键且与 config property 一致，既有节不变")
+
+    # ---------------- 保存路径：/api/config 白名单放行三键 ----------------
+
+    def test_save_config_kb_fallback_web_true_persists_and_hot_updates(self):
+        """{"tools":{"kb_fallback_web":true}} → 200、临时 runtime.json 落盘 true、agent.config 热更新。"""
+        handler, cfg = self.bare_handler({"retrieval": {"top_k": 6}})
+        status, body = handler._save_config({"tools": {"kb_fallback_web": True}})
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        saved = json.loads(config_mod.RUNTIME_PATH.read_text(encoding="utf-8"))
+        self.assertIs(saved["tools"]["kb_fallback_web"], True, "应落盘为真 bool")
+        self.assertIs(cfg.kb_fallback_web, True, "property 应读到热更新后的内存配置")
+        self.assertIs(body["config"]["tools"]["kb_fallback_web"], True, "响应 config 应回读新值")
+
+        print("✓ 保存 kb_fallback_web=true：200 落盘 true 且 agent.config 热更新")
+
+    def test_save_config_bool_string_normalization_and_rejection(self):
+        """字符串 "yes" → 200 且归一化为 true 落盘；"maybe" → 400（错误含 dotted 路径）不落盘。"""
+        handler, cfg = self.bare_handler()
+        status, body = handler._save_config({"tools": {"kb_fallback_web": "maybe"}})
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "配置校验失败")
+        self.assertTrue(body["errors"], "400 响应应含 errors 列表")
+        self.assertIn("tools.kb_fallback_web", body["errors"][0], "错误消息应含完整 dotted 路径")
+        self.assertFalse(config_mod.RUNTIME_PATH.exists(), "校验失败不得写 runtime.json")
+        self.assertIs(cfg.kb_fallback_web, False, "校验失败不得热更新内存配置")
+
+        status2, _body2 = handler._save_config({"memory": {"long_term_enabled": "yes"}})
+        self.assertEqual(status2, 200)
+        saved = json.loads(config_mod.RUNTIME_PATH.read_text(encoding="utf-8"))
+        self.assertIs(saved["memory"]["long_term_enabled"], True, "落盘前应归一化为真 bool")
+        self.assertIs(cfg.memory_long_term_enabled, True)
+
+        print("✓ 布尔字符串归一化落盘（yes→true）；非法值 maybe 400 且不落盘不热更新")
+
+    def test_save_config_entities_false_persists(self):
+        """{"memory":{"entities_enabled":false}} → 200、落盘 false、property False（显式关闭不丢）。"""
+        handler, cfg = self.bare_handler({"memory": {"entities_enabled": True}})
+        status, body = handler._save_config({"memory": {"entities_enabled": False}})
+        self.assertEqual(status, 200)
+        saved = json.loads(config_mod.RUNTIME_PATH.read_text(encoding="utf-8"))
+        self.assertIs(saved["memory"]["entities_enabled"], False)
+        self.assertIs(cfg.memory_entities_enabled, False)
+        self.assertIs(body["config"]["memory"]["entities_enabled"], False)
+
+        print("✓ 保存 entities_enabled=false：200 落盘 false 且热更新")
+
+    def test_save_config_unknown_tools_keys_dropped_and_noop_kept(self):
+        """回归：tools 节未知键仍被白名单丢弃；不含三键的保存请求行为不变。"""
+        handler, cfg = self.bare_handler()
+        status, _body = handler._save_config({"tools": {"kb_fallback_web": True, "web_search_timeout": 99}})
+        self.assertEqual(status, 200)
+        saved = json.loads(config_mod.RUNTIME_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(saved["tools"]), ["kb_fallback_web"], "未知键应被白名单丢弃")
+        self.assertIs(cfg.kb_fallback_web, True)
+
+        # 不传这些键的保存请求行为不变（清空临时 runtime 后单独保存 retrieval）
+        config_mod.RUNTIME_PATH.unlink()
+        handler2, _cfg2 = self.bare_handler()
+        status2, _body2 = handler2._save_config({"retrieval": {"top_k": 9}})
+        self.assertEqual(status2, 200)
+        saved2 = json.loads(config_mod.RUNTIME_PATH.read_text(encoding="utf-8"))
+        self.assertNotIn("tools", saved2, "未传 tools 节时不应出现在落盘结果")
+        self.assertNotIn("memory", saved2, "未传 memory 节时不应出现在落盘结果")
+        self.assertEqual(saved2["retrieval"]["top_k"], 9)
+
+        print("✓ tools 未知键被丢弃；不含三键的保存请求行为不变")
+
+    # ---------------- WebUI 静态断言（控件/payload/hint） ----------------
+
+    def test_webui_static_egress_switches(self):
+        """webui 静态断言：三个下拉 id 存在、保存 payload 含 tools/memory 节、既有 hint 未破坏。"""
+        html = (REPO / "scripts" / "webui.html").read_text(encoding="utf-8")
+        for control_id in ("cfgKbFallbackWeb", "cfgLongTermMemory", "cfgEntitiesMemory"):
+            self.assertIn(f'id="{control_id}"', html, f"控件 {control_id} 应存在")
+        # 保存 payload 含 tools/memory 节（布尔经 'true' 字符串比较）
+        self.assertIn("tools:{kb_fallback_web:document.getElementById('cfgKbFallbackWeb').value==='true'}", html)
+        self.assertIn(
+            "memory:{long_term_enabled:document.getElementById('cfgLongTermMemory').value==='true',"
+            "entities_enabled:document.getElementById('cfgEntitiesMemory').value==='true'}", html)
+        # 加载回填 JS（读 cfg.tools/cfg.memory）
+        self.assertIn("cfg.tools||{}).kb_fallback_web", html)
+        self.assertIn("cfg.memory||{}).long_term_enabled", html)
+        self.assertIn("cfg.memory||{}).entities_enabled", html)
+        # 三处控件 label
+        self.assertIn("联网降级（KB 未命中时自动搜索）", html)
+        self.assertIn("<label>长期记忆</label>", html)
+        self.assertIn("<label>实体记忆</label>", html)
+        # 既有 G3 披露 hint（原 786/806 行）未被破坏
+        self.assertIn("数据外发与记忆（默认关闭）：联网降级开启后问题可能发送到互联网", html)
+        self.assertIn("长期记忆与实体记忆默认关闭；开启后成功问答会写入本机 data/memory/", html)
+
+        print("✓ webui 静态断言：三控件/payload 节/回填/label/hint 文案齐备")
+
+
 if __name__ == "__main__":
     unittest.main()

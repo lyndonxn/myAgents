@@ -53,6 +53,9 @@ CONFIG_FIELDS = {
     "audit": {"retention_days", "log_content"},
     "tasks": {"step_timeout_s", "total_timeout_s", "watchdog_interval_s"},
     "synthesis": {"max_tokens", "evidence_compression"},
+    # G3：外发/记忆三开关进设置面板（保存路径不再丢弃，前端可读回显）
+    "tools": {"kb_fallback_web"},
+    "memory": {"long_term_enabled", "entities_enabled"},
 }
 MAX_BODY = 10 * 1024 * 1024        # 请求体上限 10MB
 MAX_IMAGE_DATA_URL = 6 * 1024 * 1024  # 图片 data URL 上限 6MB
@@ -1013,6 +1016,14 @@ class Handler(BaseHTTPRequestHandler):
                 "model": cfg.vision_model,
                 "api_key_masked": mask_key(cfg.vision_api_key),
                 "configured": cfg.vision_configured,
+            },
+            # G3：外发/记忆三开关只读透出（前端回填下拉，不改既有键）
+            "tools": {
+                "kb_fallback_web": cfg.kb_fallback_web,
+            },
+            "memory": {
+                "long_term_enabled": cfg.memory_long_term_enabled,
+                "entities_enabled": cfg.memory_entities_enabled,
             },
         }
 

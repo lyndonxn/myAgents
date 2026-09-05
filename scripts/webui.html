@@ -784,6 +784,7 @@ body{
       <div class="field wide"><label>检索模式</label><select id="cfgRetrievalPreset"><option value="balanced">均衡（推荐）</option><option value="fast">快速</option><option value="deep">深度</option><option value="custom">自定义</option></select></div>
       <div class="settings-hint">均衡模式适合大多数知识库；快速模式响应更快；深度模式召回更多内容。</div>
       <div class="settings-hint">数据外发与记忆（默认关闭）：联网降级开启后问题可能发送到互联网；长期记忆与实体记忆数据保存到本机 data/。开启对应开关即恢复自动降级与跨会话记忆。</div>
+      <div class="field"><label>联网降级（KB 未命中时自动搜索）</label><select id="cfgKbFallbackWeb"><option value="false">关闭</option><option value="true">开启</option></select></div>
       <details class="advanced-settings"><summary>高级检索设置</summary><div class="advanced-grid">
         <div class="field"><label>召回数量</label><input id="cfgTopK" type="number" min="1" max="15"></div>
         <div class="field"><label>重排方式</label><select id="cfgRerank"><option value="auto">自动</option><option value="cross_encoder">本地精排</option><option value="llm">模型精排</option><option value="off">关闭</option></select></div>
@@ -804,6 +805,8 @@ body{
     </div>
     <div class="settings-page" id="memoryPage">
       <div class="settings-hint">长期记忆与实体记忆默认关闭；开启后成功问答会写入本机 data/memory/。此处可查看被记住的内容，并逐条撤回或全部清除。</div>
+      <div class="field"><label>长期记忆</label><select id="cfgLongTermMemory"><option value="false">关闭</option><option value="true">开启</option></select></div>
+      <div class="field"><label>实体记忆</label><select id="cfgEntitiesMemory"><option value="false">关闭</option><option value="true">开启</option></select></div>
       <div class="log-toolbar"><input id="memQuery" placeholder="搜索记忆内容" style="flex:1"><button class="actionbtn" onclick="loadMemory()">刷新</button><button class="actionbtn" onclick="clearMemory()">清空全部</button></div>
       <div class="settings-hint" id="memStats">加载中…</div>
       <div id="memList"></div>
@@ -1521,6 +1524,8 @@ async function openSettings(requireModel=false){
     document.getElementById('cfgTemp').value=cfg.llm.temperature;document.getElementById('cfgTokens').value=cfg.llm.max_tokens;
     document.getElementById('cfgTopK').value=cfg.retrieval.top_k;document.getElementById('cfgRerank').value=cfg.retrieval.rerank;
     document.getElementById('cfgCandidates').value=cfg.retrieval.rerank_candidates;document.getElementById('cfgMulti').value=String(cfg.retrieval.multi_query);document.getElementById('cfgRerankerModel').value=cfg.retrieval.reranker_model||'';
+    document.getElementById('cfgKbFallbackWeb').value=String(!!(cfg.tools||{}).kb_fallback_web);
+    document.getElementById('cfgLongTermMemory').value=String(!!(cfg.memory||{}).long_term_enabled);document.getElementById('cfgEntitiesMemory').value=String(!!(cfg.memory||{}).entities_enabled);
     detectRetrievalPreset();
     document.getElementById('cfgVisionKey').placeholder=cfg.vision.api_key_masked||'留空则使用主 Key';document.getElementById('cfgVisionBase').value=cfg.vision.base_url||'';document.getElementById('cfgVisionModel').value=cfg.vision.model||'';
     document.getElementById('cfgKb').value=kb.path||'';document.getElementById('kbStatus').textContent=`${kb.exists?'目录有效':'目录不存在'} · ${kb.md_count} 个 Markdown 文件${kb.building?' · 正在重建':''}`;
@@ -1530,7 +1535,7 @@ async function openSettings(requireModel=false){
 }
 async function saveSettings(){
   const key=document.getElementById('cfgKey').value.trim();if(!llmConfigured&&!key&&document.getElementById('cfgMode').value!=='local'){showToast('请填写模型 API Key',true);document.getElementById('cfgKey').focus();return;}
-  const payload={llm:{api_key:key,base_url:document.getElementById('cfgBase').value.trim(),chat_model:document.getElementById('cfgModel').value.trim(),mode:document.getElementById('cfgMode').value,temperature:Number(document.getElementById('cfgTemp').value),max_tokens:Number(document.getElementById('cfgTokens').value)},retrieval:{top_k:Number(document.getElementById('cfgTopK').value),rerank:document.getElementById('cfgRerank').value,rerank_candidates:Number(document.getElementById('cfgCandidates').value),multi_query:document.getElementById('cfgMulti').value==='true',reranker_model:document.getElementById('cfgRerankerModel').value.trim()},vision:{api_key:document.getElementById('cfgVisionKey').value,base_url:document.getElementById('cfgVisionBase').value.trim(),model:document.getElementById('cfgVisionModel').value.trim()}};
+  const payload={llm:{api_key:key,base_url:document.getElementById('cfgBase').value.trim(),chat_model:document.getElementById('cfgModel').value.trim(),mode:document.getElementById('cfgMode').value,temperature:Number(document.getElementById('cfgTemp').value),max_tokens:Number(document.getElementById('cfgTokens').value)},retrieval:{top_k:Number(document.getElementById('cfgTopK').value),rerank:document.getElementById('cfgRerank').value,rerank_candidates:Number(document.getElementById('cfgCandidates').value),multi_query:document.getElementById('cfgMulti').value==='true',reranker_model:document.getElementById('cfgRerankerModel').value.trim()},vision:{api_key:document.getElementById('cfgVisionKey').value,base_url:document.getElementById('cfgVisionBase').value.trim(),model:document.getElementById('cfgVisionModel').value.trim()},tools:{kb_fallback_web:document.getElementById('cfgKbFallbackWeb').value==='true'},memory:{long_term_enabled:document.getElementById('cfgLongTermMemory').value==='true',entities_enabled:document.getElementById('cfgEntitiesMemory').value==='true'}};
   try{const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await r.json();if(!r.ok||data.error)throw new Error(data.error||'保存失败');llmConfigured=true;document.getElementById('setupNotice').hidden=true;document.getElementById('cfgKey').value='';document.getElementById('cfgVisionKey').value='';closeSettings();showToast('模型配置已保存，可以开始提问');refreshStatus();}catch(error){showToast(requestErrorMessage(error),true);}
 }
 async function rebuildKb(){
