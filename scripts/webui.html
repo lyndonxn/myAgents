@@ -372,7 +372,8 @@ body{
 .inputrow textarea{
   flex:1;border:none;outline:none;resize:none;background:transparent;
   font-family:var(--sans);font-size:13.5px;color:var(--ink);
-  padding:13px 16px;line-height:1.5;max-height:120px;
+  padding:13px 16px;line-height:1.5;max-height:132px;
+  overflow-y:auto;
 }
 .inputrow textarea::placeholder{color:var(--mute);}
 .iconbtn{
@@ -592,7 +593,7 @@ body{
 .settings-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.actionbtn{border:1px solid var(--line-2);border-radius:6px;padding:8px 13px;background:var(--panel);cursor:pointer}.actionbtn.primary{background:var(--blue);border-color:var(--blue);color:white}
 .settings-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px}.settings-tabs button{border:0;background:none;color:var(--mute);padding:8px 12px;cursor:pointer;border-bottom:2px solid transparent}.settings-tabs button.active{color:var(--blue);border-color:var(--blue);font-weight:600}.settings-page{display:none}.settings-page.active{display:grid}.log-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:10px}.log-view{height:340px;overflow:auto;white-space:pre-wrap;background:#101827;color:#CBD5E1;border-radius:6px;padding:12px;font:11px/1.65 var(--mono)}
 .mem-item{border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:8px}.mem-item .mem-q{font-weight:600;font-size:13px;display:flex;justify-content:space-between;gap:8px;align-items:center}.mem-item .mem-a{font-size:12px;color:var(--mute);margin-top:3px}.mem-item .mem-meta{font-size:11px;color:var(--mute);opacity:.75;margin-top:3px}.mem-item .mem-del{flex-shrink:0}
-.ctx-line{height:3px;background:var(--line);overflow:hidden;margin-bottom:9px}.ctx-line span{display:block;height:100%;width:0;background:var(--blue);transition:width .25s}.ctx-label{font-family:var(--mono);font-size:9px;color:var(--mute)}
+.ctx-line{display:flex;gap:3px;height:4px;margin-bottom:9px}.ctx-line .seg{flex:1;height:4px;border-radius:2px;background:var(--line);transition:background .25s}.ctx-label{font-family:var(--mono);font-size:9px;color:var(--mute)}
 .iconbtn.recording{color:var(--red);border-color:var(--red);animation:micPulse 1s infinite}@keyframes micPulse{50%{box-shadow:0 0 0 4px rgba(220,38,38,.14)}}
 :root[data-theme="dark"]{--bg:#10141B;--panel:#171C25;--ink:#EEF2F8;--ink-2:#B7C0CE;--mute:#7F8998;--line:#293241;--line-2:#3A4658;--blue-soft:#172A4D;--blue-line:#31558F} :root[data-theme="dark"] .topbar{background:rgba(23,28,37,.9)}
 
@@ -650,16 +651,18 @@ body{
 .ans-status{
   display:flex;align-items:center;gap:8px;flex-wrap:wrap;
   border:1px solid var(--line);background:var(--bg);border-radius:8px;
-  padding:9px 14px;margin-bottom:14px;min-height:38px;
+  padding:9px 14px;margin-bottom:14px;min-height:36px;
+  font-size:12px;color:var(--ink-2);
   transition:border-color .15s;
 }
 .ans-status:hover{border-color:var(--line-2);}
-.ans-status .st-mode{display:inline-flex;align-items:center;gap:6px;color:var(--ink);font-weight:600;font-size:12px;}
+.ans-status .st-mode{display:inline-flex;align-items:center;gap:6px;color:var(--ink);font-weight:600;font-size:12.5px;}
 .ans-status .st-mode.warn{color:var(--amber);}
 .ans-status .st-sep{color:var(--line-2);margin:0 3px;user-select:none;}
 .ans-status .st-tool{
-  font-family:var(--mono);font-size:8.5px;color:var(--mute);
-  border:1px solid var(--line);border-radius:4px;padding:2px 8px;letter-spacing:0.06em;
+  font-family:var(--mono);font-size:10.5px;color:var(--mute);
+  border:1px solid var(--line);border-radius:4px;padding:1px 8px;letter-spacing:0.04em;
+  background:var(--panel);
 }
 .ans-status .task-flag{color:var(--blue);background:var(--blue-soft);border:1px solid var(--blue-line);}
 .ans-status .detail-link{
@@ -730,7 +733,10 @@ body{
 @keyframes caretBlink{50%{opacity:0}}
 
 .toast{position:fixed;left:50%;bottom:24px;z-index:70;transform:translate(-50%,12px);opacity:0;pointer-events:none;background:var(--ink);color:#fff;border-radius:6px;padding:9px 14px;font-size:12px;transition:.2s}.toast.show{opacity:1;transform:translate(-50%,0)}
-.img-preview{display:flex;align-items:center;gap:9px;margin:0 0 9px;padding:8px;border:1px solid var(--line);background:var(--panel);border-radius:6px}.img-preview[hidden]{display:none}.img-preview img{width:42px;height:42px;object-fit:cover;border-radius:4px}.img-preview span{flex:1;font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.img-preview{position:relative;display:inline-flex;margin:0 0 9px;padding:0;border:1px solid var(--line);background:var(--panel);border-radius:8px}.img-preview[hidden]{display:none}.img-preview img{width:52px;height:52px;object-fit:cover;border-radius:7px;display:block}
+.img-preview .img-clear{position:absolute;top:-7px;right:-7px;width:18px;height:18px;border-radius:50%;background:var(--panel);border:1px solid var(--line-2);color:var(--mute);font-size:11px;line-height:1;cursor:pointer;display:grid;place-items:center;padding:0;transition:color .12s,border-color .12s}
+.img-preview .img-clear:hover{color:var(--red);border-color:var(--red)}
+.composer.dragover .inputrow{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,0.12)}
 </style>
 </head>
 <body>
@@ -786,8 +792,8 @@ body{
     </div>
     <div class="composer">
       <div class="composer-inner">
-        <div class="ctx-line" id="ctxLine" title="上下文容量"><span id="ctxFill"></span></div>
-        <div class="img-preview" id="imgPreview" hidden><img id="imgThumb" alt="待搜索图片"><span id="imgName"></span><button class="iconbtn" onclick="clearImage()" title="移除图片">×</button></div>
+        <div class="ctx-line" id="ctxLine" title="上下文容量"></div>
+        <div class="img-preview" id="imgPreview" hidden><img id="imgThumb" alt="待搜索图片"><button class="img-clear" onclick="clearImage()" title="移除图片" aria-label="移除图片">×</button></div>
         <div class="inputrow">
           <button class="iconbtn" id="micBtn" title="语音输入" aria-label="语音输入"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"></path></svg></button>
           <button class="iconbtn filebtn" id="imgBtn" title="上传图片" aria-label="上传图片"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8l8.4-8.4"></path></svg><span>图片</span></button>
@@ -1506,6 +1512,7 @@ function syncSendBtn(){
 function quickAsk(text){
   if(busy) return;
   ta.value = text;
+  ta.style.height=Math.min(ta.scrollHeight,132)+'px'; // W4：长追问也限高，内部滚动
   syncSendBtn();
   onSend();
 }
@@ -1741,15 +1748,30 @@ ta.addEventListener('keydown', e=>{
 });
 ta.addEventListener('input', ()=>{
   ta.style.height='auto';
-  ta.style.height = Math.min(ta.scrollHeight,120)+'px';
+  ta.style.height = Math.min(ta.scrollHeight,132)+'px';
   syncSendBtn();
 });
 document.getElementById('imgBtn').addEventListener('click',()=>document.getElementById('imgFile').click());
-document.getElementById('imgFile').addEventListener('change',event=>{
-  const file=event.target.files[0];if(!file)return;
+function setPendingImageFile(file){
+  if(!file||!file.type.startsWith('image/'))return;
   const reader=new FileReader();
-  reader.onload=()=>{pendingImage={name:file.name,dataUrl:String(reader.result)};document.getElementById('imgThumb').src=pendingImage.dataUrl;document.getElementById('imgName').textContent=file.name;document.getElementById('imgPreview').hidden=false;syncSendBtn();};
-  reader.readAsDataURL(file);event.target.value='';
+  reader.onload=()=>{pendingImage={name:file.name,dataUrl:String(reader.result)};document.getElementById('imgThumb').src=pendingImage.dataUrl;document.getElementById('imgPreview').hidden=false;syncSendBtn();};
+  reader.readAsDataURL(file);
+}
+document.getElementById('imgFile').addEventListener('change',event=>{
+  setPendingImageFile(event.target.files[0]);event.target.value='';
+});
+/* W4：图片可从外部拖入输入区（composer 高亮反馈，drop 识别首个图片文件） */
+const composerEl=document.querySelector('.composer');
+let dragDepth=0;
+window.addEventListener('dragover',event=>event.preventDefault());
+window.addEventListener('dragenter',()=>{dragDepth++;composerEl.classList.add('dragover');});
+window.addEventListener('dragleave',()=>{dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)composerEl.classList.remove('dragover');});
+window.addEventListener('drop',event=>{
+  event.preventDefault();dragDepth=0;composerEl.classList.remove('dragover');
+  if(busy)return;
+  const file=Array.from(event.dataTransfer?.files||[]).find(f=>f.type.startsWith('image/'));
+  setPendingImageFile(file);
 });
 function clearImage(){pendingImage=null;document.getElementById('imgPreview').hidden=true;syncSendBtn();}
 
@@ -1842,7 +1864,21 @@ document.getElementById('themeBtn').addEventListener('click',()=>{const next=doc
 const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
 if(SpeechRec){const recognition=new SpeechRec();recognition.lang='zh-CN';recognition.interimResults=true;recognition.onresult=event=>{ta.value=Array.from(event.results).map(r=>r[0].transcript).join('');syncSendBtn();};recognition.onend=()=>document.getElementById('micBtn').classList.remove('recording');document.getElementById('micBtn').addEventListener('click',()=>{document.getElementById('micBtn').classList.add('recording');recognition.start();});}else{document.getElementById('micBtn').disabled=true;document.getElementById('micBtn').title='当前浏览器不支持语音识别';}
 
-function updateContext(context){const used=context?.prompt_tokens||0,max=context?.max_context||128000,pct=Math.min(100,used/max*100);document.getElementById('ctxFill').style.width=`${pct}%`;document.getElementById('ctxLine').title=`上下文 ${(used/1000).toFixed(1)}K / ${(max/1000).toFixed(0)}K`}
+/* W4：上下文分段表——用量越高颜色由绿渐变到红（HSL 插值 142°→0°） */
+const CTX_SEGS=24;
+(function initCtxLine(){
+  const line=document.getElementById('ctxLine');
+  if(!line)return;
+  line.innerHTML=Array.from({length:CTX_SEGS},()=>'<span class="seg"></span>').join('');
+})();
+function updateContext(context){
+  const used=context?.prompt_tokens||0,max=context?.max_context||128000,pct=Math.min(100,used/max*100);
+  const segs=document.querySelectorAll('#ctxLine .seg');
+  const active=Math.round(segs.length*pct/100);
+  const color=`hsl(${Math.round(142*(1-pct/100))} 68% 42%)`; // 0% 绿 → 100% 红
+  segs.forEach((seg,i)=>{const on=i<active;seg.classList.toggle('on',on);seg.style.background=on?color:'var(--line)';});
+  document.getElementById('ctxLine').title=`上下文 ${(used/1000).toFixed(1)}K / ${(max/1000).toFixed(0)}K（${pct.toFixed(1)}%）`;
+}
 
 async function refreshStatus(){
   try{

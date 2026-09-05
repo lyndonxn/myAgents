@@ -114,6 +114,19 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W4 切片记录（2026-09-05，输入区/状态条/图片预览/上下文表 四项视觉与交互打磨）
+
+- **背景**：用户实测反馈四项：①长文本输入撑爆视觉（图1）；②状态条字体突兀（对齐原型图2）；③图片预览改小图+右上角关闭、支持外部拖入；④上下文条改分段样式（图4）并按用量绿→红着色（用户明确要求色彩渐变，HSL 插值属运行时色，例外于"仅既有 tokens"口径）。
+- **验证证据**：`unittest discover` 191/191 OK；node --check 通过；浏览器冒烟（合成 DragEvent drop + DataTransfer）：长文本 inputH=132 钳制且内部滚动；上下文表 10% → rgb(34,180,54) 绿、95% → 23/24 段 rgb(180,51,34) 红；拖入图片 dragenter 高亮 + 预览小图出现 + 缩略图就绪；× 关闭后预览隐藏、pendingImage 清空；明暗双主题 token 自适应。视觉验收由用户实测确认（用户驱动的快速视觉迭代环）。
+- **实现（仅 scripts/webui.html）**：
+  - 输入框：CSS `max-height:132px; overflow-y:auto`，JS input/quickAsk 两路径同步钳制高度。
+  - 状态条排版：基准 12px/`--ink-2`、模式 12.5px/600/`--ink`（warn 橙）、工具 chip 10.5px mono 加底色——对齐原型图2 的字号灰阶层次。
+  - 图片预览：52px 小图（去文件名），`.img-clear` 右上角悬浮圆形关闭钮（hover 红）；文件选择与拖入共用 `setPendingImageFile`；window 级 dragenter/dragover/dragleave/drop 监听（dragDepth 计数防抖，drop 取首个 image/* 文件，busy 时忽略），composer `.dragover` 蓝色高亮。
+  - 上下文表：24 段 flex 分段条（.seg），`updateContext` 按 pct 点亮段数并 HSL 插值着色（142°绿→0°红），title 显示 K/百分比；移除 ctxFill。
+- **涉及文件**：scripts/webui.html。
+
+---
+
 ## W3 切片记录（2026-09-05，用户实测反馈修复 + 答案卡严格还原图1/图2）
 
 - **背景**：用户实测 W1/W2 后报三类问题：①最严重——回答完成后答案消失；②卡头未按原型实现（RESPONSE·01 + 图标操作）；③操作行/追问区缺失，要求严格还原图1（卡头+状态条）图2（操作行+追问）。追问数据源经用户拍板：**LLM 生成**。
