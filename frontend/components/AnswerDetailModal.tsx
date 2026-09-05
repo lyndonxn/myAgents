@@ -63,13 +63,16 @@ export default function AnswerDetailModal(props: { msg: AgentStreamMsg | null; o
   if (msg.messageId) rows.push(["消息 ID", `#${esc(msg.messageId)}`]);
 
   return (
-    <div className="modal show" id="answerModal" role="dialog" aria-modal="true" aria-labelledby="answerDetailTitle" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
-      <div className="modal-panel narrow">
-        <div className="modal-head">
-          <h2 id="answerDetailTitle">回答详情</h2>
+    <>
+      <div className="detail-backdrop" onClick={props.onClose} />
+      <div className="detail-drawer" role="dialog" aria-modal="true" aria-labelledby="answerDetailTitle">
+        <div className="detail-drawer-head">
+          <div className="detail-drawer-title" id="answerDetailTitle">
+            检索详情 · DEBUG
+          </div>
           <button className="modal-close" onClick={props.onClose} aria-label="关闭" type="button">×</button>
         </div>
-        <div id="answerDetailBody">
+        <div className="detail-drawer-body" id="answerDetailBody">
           {rows.map(([k, v]) => (
             <div className="ad-row" key={k}>
               <span className="k">{k}</span>
@@ -78,6 +81,6 @@ export default function AnswerDetailModal(props: { msg: AgentStreamMsg | null; o
           ))}
         </div>
       </div>
-    </div>
+    </>
   );
 }

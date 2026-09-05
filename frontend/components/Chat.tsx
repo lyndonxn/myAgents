@@ -5,7 +5,7 @@
 
 import { useLayoutEffect, useRef } from "react";
 import type { FeedbackValue, MetricsInfo, PlanInfo, SourceDetail } from "@/lib/api";
-import { simpleHtml } from "@/lib/markdown";
+import { esc, simpleHtml } from "@/lib/markdown";
 import AnswerCard, { type AnswerData } from "@/components/AnswerCard";
 
 export interface AgentStreamMsg {
@@ -175,9 +175,13 @@ function StreamCard({ msg, handlers }: { msg: AgentStreamMsg; handlers: ChatHand
           )}
           {msg.phase === "streaming" && (
             <>
-              <div className="gen-status">
+              {/* W7（图3）：转圈圈 + 状态文字 + 工具 chip（无扫描条）+ 流式正文 */}
+              <div className="retrieving">
+                <span className="spinner" />
                 <span>正在生成答案 · 引用 {msg.sources.length} 段内容</span>
-                <i className="gen-line" aria-hidden="true" />
+                {msg.plan?.steps?.find((st) => st.action) && (
+                  <span className="st-tool">{esc(msg.plan.steps.find((st) => st.action)!.action)}</span>
+                )}
               </div>
               <div
                 className="block lead show"

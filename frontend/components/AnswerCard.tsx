@@ -87,7 +87,7 @@ export default function AnswerCard(props: {
     }
     setTimeout(() => {
       const bar = cardRef.current?.querySelector(".retrieval-bar");
-      const row = bar?.querySelector(`.rb-chunk[data-idx="${n}"]`) as HTMLElement | null;
+      const row = bar?.querySelector(`[data-idx="${n}"]`) as HTMLElement | null;
       if (!row) return;
       row.scrollIntoView({ behavior: "smooth", block: "center" });
       row.classList.remove("flash");
@@ -118,26 +118,28 @@ export default function AnswerCard(props: {
     </div>
   ) : null;
 
+  /* W7：证据卡（图1）——独立圆角卡：圈号 + 标题 + 面包屑 + 「」引句框 */
   const evRows = data.sources.map((s, i) => {
     const d: Partial<SourceDetail> = data.sourcesDetail[i] || {};
-    const idx = String(i + 1).padStart(2, "0");
     if (d.title || d.snippet) {
       const crumb = [d.path, d.heading].filter(Boolean).join(" › ");
       return (
-        <div className="rb-chunk rich" data-idx={i + 1} key={i}>
-          <span className="ck">#{idx}</span>
-          <div className="rc-main">
-            <div className="rc-title">{esc(d.title || s)}</div>
-            {crumb && <div className="rc-crumb">{esc(crumb)}</div>}
-            {d.snippet && <div className="rc-quote">{esc(d.snippet)}</div>}
+        <div className="ev-card" data-idx={i + 1} key={i}>
+          <span className="ev-no">{i + 1}</span>
+          <div>
+            <div className="ev-title">{esc(d.title || s)}</div>
+            {crumb && <div className="ev-crumb">{esc(crumb)}</div>}
+            {d.snippet && <div className="ev-quote">「{esc(d.snippet)}」</div>}
           </div>
         </div>
       );
     }
     return (
-      <div className="rb-chunk" data-idx={i + 1} key={i}>
-        <span className="ck">#{idx}</span>
-        <span>{esc(s)}</span>
+      <div className="ev-card" data-idx={i + 1} key={i}>
+        <span className="ev-no">{i + 1}</span>
+        <div>
+          <div className="ev-title">{esc(s)}</div>
+        </div>
       </div>
     );
   });
@@ -219,15 +221,16 @@ export default function AnswerCard(props: {
           {/* L2 证据折叠 */}
           {data.sources.length > 0 && (
             <div
-              className={`block retrieval-bar${evOpen ? " open" : ""}`}
+              className={`block retrieval-bar ev-bar-header${evOpen ? " open" : ""}`}
               data-evkey={key}
               onClick={toggleEv}
             >
               <div className="rb-top">
-                <span className="rb-caret">▶</span>
+                <span className="caret-down">⌄</span>
                 <span className="rb-l">
-                  已检索到 <b>{data.sources.length}</b> 个相关来源
+                  <b>{data.sources.length}</b> 个引用来源
                 </span>
+                <span className="caret-up" style={{ marginLeft: "auto" }}>⌄</span>
               </div>
               <div className="rb-list">{evRows}</div>
             </div>
