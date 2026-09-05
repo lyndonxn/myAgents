@@ -27,6 +27,7 @@ import Composer, { type PendingImage } from "@/components/Composer";
 import TracePanel, { type SourceVM, type TraceStepVM, type VitalsVM } from "@/components/TracePanel";
 import AnswerDetailModal from "@/components/AnswerDetailModal";
 import SettingsModal, { type SettingsTab } from "@/components/SettingsModal";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 const INTRO: MsgVM = { kind: "intro" };
 
@@ -82,6 +83,7 @@ export default function Home() {
   const streamFailedFlag = useRef(false);
   const traceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
+  const { confirm: uiConfirm, confirmDialog } = useConfirm();
   /* ----- W6-S7 设置 ----- */
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
@@ -231,7 +233,15 @@ export default function Home() {
       if (busy) return;
       const s = sessions.find((x) => x.id === id);
       if (!s) return;
-      if (!confirm(`确定删除会话“${s.title}”吗？删除后无法恢复。`)) return;
+      if (
+        !(await uiConfirm({
+          title: "删除会话",
+          message: `确定删除会话“${s.title}”吗？删除后无法恢复。`,
+          confirmText: "删除",
+          danger: true,
+        }))
+      )
+        return;
       try {
         await api.deleteSession(id);
         showToast("会话已删除");
@@ -245,12 +255,20 @@ export default function Home() {
         showToast((e as Error).message || "删除失败", true);
       }
     },
-    [busy, sessions, currentSession, openSession, createSession, showToast],
+    [busy, sessions, currentSession, openSession, createSession, showToast, uiConfirm],
   );
 
   const onResetSession = useCallback(async () => {
     if (busy || !currentSession) return;
-    if (!confirm("确定清空当前会话的对话记录吗？可同时删除该会话长期记忆，删除后无法恢复。")) return;
+    if (
+      !(await uiConfirm({
+        title: "清空会话",
+        message: "确定清空当前会话的对话记录吗？可同时删除该会话长期记忆，删除后无法恢复。",
+        confirmText: "清空",
+        danger: true,
+      }))
+    )
+      return;
     try {
       await api.resetSession(currentSession);
     } catch (_e) {
@@ -258,7 +276,7 @@ export default function Home() {
     }
     setMessages([INTRO]);
     setMemCount(0);
-  }, [busy, currentSession]);
+  }, [busy, currentSession, uiConfirm]);
 
   /* ----- 工作区 ----- */
   const onSwitchWorkspace = useCallback(
@@ -733,6 +751,9 @@ export default function Home() {
           welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }}
           handlers={handlers}
           streamTick={tick}
+          onQuickAsk={(q) => {
+            if (!busy) void onSend(q);
+          }}
         />
         <Composer
           ctxPct={ctxPct}
@@ -757,11 +778,13 @@ export default function Home() {
         onTaskAction={(id, action) => void onTaskAction(id, action)}
       />
       <AnswerDetailModal msg={detailMsg} onClose={() => setDetailMsg(null)} />
+      {confirmDialog}
       <SettingsModal
         open={settingsOpen}
         initialTab={settingsTab}
         requireModelNotice={requireModelNotice}
         llmConfigured={llmConfigured}
+        confirm={uiConfirm}
         onClose={() => setSettingsOpen(false)}
         onToast={showToast}
         onSaved={() => void refreshStatus()}

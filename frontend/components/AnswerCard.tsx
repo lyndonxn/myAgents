@@ -124,7 +124,7 @@ export default function AnswerCard(props: {
     if (d.title || d.snippet) {
       const crumb = [d.path, d.heading].filter(Boolean).join(" › ");
       return (
-        <div className="ev-card" data-idx={i + 1} key={i}>
+        <div className="ev-card" data-idx={i + 1} key={i} onClick={(e) => e.stopPropagation()}>
           <span className="ev-no">{i + 1}</span>
           <div>
             <div className="ev-title">{esc(d.title || s)}</div>
@@ -135,7 +135,7 @@ export default function AnswerCard(props: {
       );
     }
     return (
-      <div className="ev-card" data-idx={i + 1} key={i}>
+      <div className="ev-card" data-idx={i + 1} key={i} onClick={(e) => e.stopPropagation()}>
         <span className="ev-no">{i + 1}</span>
         <div>
           <div className="ev-title">{esc(s)}</div>
@@ -220,19 +220,30 @@ export default function AnswerCard(props: {
           {planHtml}
           {/* L2 证据折叠 */}
           {data.sources.length > 0 && (
-            <div
-              className={`block retrieval-bar ev-bar-header show${evOpen ? " open" : ""}`}
-              data-evkey={key}
-              onClick={toggleEv}
-            >
-              <div className="rb-top">
+            <div className={`block retrieval-bar ev-bar-header show${evOpen ? " open" : ""}`} data-evkey={key}>
+              <div
+                className="rb-top"
+                role="button"
+                tabIndex={0}
+                aria-expanded={evOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleEv();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleEv();
+                  }
+                }}
+              >
                 <span className="caret-down">⌄</span>
                 <span className="rb-l">
                   <b>{data.sources.length}</b> 个引用来源
                 </span>
                 <span className="caret-up" style={{ marginLeft: "auto" }}>⌄</span>
               </div>
-              <div className="rb-list">{evRows}</div>
+              <div className="rb-list" onClick={(e) => e.stopPropagation()}>{evRows}</div>
             </div>
           )}
           {/* L3 操作行（图2） */}

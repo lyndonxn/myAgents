@@ -793,3 +793,10 @@ body{
   border:1px solid var(--line);border-radius:4px;padding:1px 8px;letter-spacing:0.04em;
   background:var(--panel);
 }
+
+/* ============ W8 · 友好确认弹窗 ============ */
+.confirm-panel{width:min(420px,100%);padding:22px;}
+.confirm-title{font-size:15px;font-weight:700;color:var(--ink);}
+.confirm-message{margin-top:10px;font-size:13px;line-height:1.7;color:var(--ink-2);}
+.actionbtn.danger{background:var(--red);border-color:var(--red);color:#fff;}
+.actionbtn.danger:hover{background:#B91C1C;border-color:#B91C1C;}

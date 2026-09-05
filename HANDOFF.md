@@ -114,11 +114,11 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
-## W7 记录（2026-09-05，用户实测反馈三项 UI 精修）
+## W8 记录（2026-09-05，用户实测反馈三项交互补全）
 
-- **内容**：①证据列表改图1 独立卡片式——每来源一张圆角卡（圈号 `.ev-no` + 标题 + 面包屑 + 「」引句框），折叠头改「⌄ N 个引用来源 ⌃」双侧 chevron（展开左旋）；引用跳转选择器随行结构更新为 `[data-idx]`；②详情改右侧抽屉——`.detail-drawer` 420px 右滑入（slide-in 动画）+ 遮罩，标题「检索详情 · DEBUG」，行内容复用 ad-row/ad-badge；③生成阶段改「转圈圈 + 流式输出」（图3）——streaming 相恢复 spinner + 状态文字 + 工具 chip（去除静默线；检索阶段维持原 spinner+扫描条）。
-- **验证**：typecheck/build/197 全绿；8787 桩流+真实历史冒烟：streaming 相 spinner/chip/无扫描条断言通过、证据卡 7 张渲染（圈号/标题/「」引句）、抽屉右侧锚定 11 行字段全对。
-- **涉及文件**：frontend/components/{AnswerCard,AnswerDetailModal,Chat}.tsx、frontend/app/globals.css。
+- **内容**：①证据区收回/展开——折叠改为**仅头部点击切换**（rb-top 加 role=button/aria-expanded/键盘支持，卡片与列表 stopPropagation，点内容不再误折叠）；②删除/清空类操作改**友好确认弹窗**——新增 `components/ConfirmDialog.tsx`（useConfirm hook：Promise 风格 `await confirm({title,message,confirmText,danger})`，danger 红色确认键，Esc/遮罩/取消关闭），替换会话删除/清空会话/记忆删除/清空记忆/日志清空共五处原生 confirm（egress 断言字符串「可同时删除该会话长期记忆」保留）；③起始四个快捷卡片接入点击发送（onQuickAsk → onSend，问题文本与 legacy QUICK_ACTIONS 一致）。**附带**：清理测试产生的空会话（仅删 title=新的会话且 0 消息）。
+- **验证**：typecheck/build/197 全绿；8787 冒烟——快捷卡片点击即发送（桩接住）、确认弹窗出现/取消不删/确认删除、折叠双向切换 + 卡片点击不折叠 + 全新加载默认收起、空会话清理后剩 3 个真实会话。
+- **涉及文件**：frontend/components/{AnswerCard,Chat,ConfirmDialog(新),SettingsModal}.tsx、frontend/app/page.tsx、frontend/app/globals.css。
 
 ## W7 记录（2026-09-05，用户实测反馈三项 UI 精修）
 

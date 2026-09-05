@@ -46,6 +46,8 @@ export default function Chat(props: {
   handlers: ChatHandlers;
   /** 流式/消息数变化信号：仅此变化才触发跟随滚动（轮询重渲染不再打扰阅读） */
   streamTick?: number;
+  /** 快捷卡片点击 → 直接发送该问题 */
+  onQuickAsk: (text: string) => void;
 }) {
   const msgs = props.messages;
   const showWelcome = msgs.length === 1 && msgs[0].kind === "intro";
@@ -90,7 +92,7 @@ export default function Chat(props: {
             </div>
             <div className="quick-grid">
               {QUICK.map((a) => (
-                <button className="quick-card" type="button" key={a.title}>
+                <button className="quick-card" type="button" key={a.title} onClick={() => props.onQuickAsk(a.q)}>
                   <div className="qc-t">
                     <span className="qc-ico">{a.icon}</span>
                     <span>{a.title}</span>
@@ -197,8 +199,8 @@ function StreamCard({ msg, handlers }: { msg: AgentStreamMsg; handlers: ChatHand
 }
 
 const QUICK = [
-  { icon: "◈", title: "随机抽取面试题", desc: "从 50 道高频题中随机抽一道" },
-  { icon: "⟳", title: "RAG 完整流程", desc: "离线建库与在线检索全链路" },
-  { icon: "⇅", title: "重排的必要性", desc: "召回与精排的分工逻辑" },
-  { icon: "⇗", title: "联网检索示例", desc: "知识库未命中时自动联网" },
+  { icon: "◈", title: "随机抽取面试题", desc: "从 50 道高频题中随机抽一道", q: "给我一个面试问题" },
+  { icon: "⟳", title: "RAG 完整流程", desc: "离线建库与在线检索全链路", q: "RAG 的完整流程是什么？" },
+  { icon: "⇅", title: "重排的必要性", desc: "召回与精排的分工逻辑", q: "它为什么需要重排？" },
+  { icon: "⇗", title: "联网检索示例", desc: "知识库未命中时自动联网", q: "帮我搜一下 DeepSeek 最新模型消息" },
 ];

@@ -46,6 +46,7 @@ export default function SettingsModal(props: {
   initialTab: SettingsTab;
   requireModelNotice: boolean;
   llmConfigured: boolean;
+  confirm: (opts: { title: string; message?: string; confirmText?: string; danger?: boolean }) => Promise<boolean>;
   onClose: () => void;
   onToast: (msg: string, error?: boolean) => void;
   onSaved: () => void;
@@ -295,7 +296,7 @@ export default function SettingsModal(props: {
   };
 
   const doDeleteEpisode = async (id: string) => {
-    if (!confirm("确定删除这条长期记忆吗？此操作不可恢复。")) return;
+    if (!(await props.confirm({ title: "删除记忆", message: "确定删除这条长期记忆吗？此操作不可恢复。", confirmText: "删除", danger: true }))) return;
     try {
       await deleteEpisode(id);
       showToast("记忆已删除");
@@ -305,7 +306,7 @@ export default function SettingsModal(props: {
     }
   };
   const doClearMemory = async () => {
-    if (!confirm("确定清空全部长期记忆与实体记忆吗？此操作不可恢复。")) return;
+    if (!(await props.confirm({ title: "清空记忆", message: "确定清空全部长期记忆与实体记忆吗？此操作不可恢复。", confirmText: "清空", danger: true }))) return;
     try {
       await clearMemoryAll();
       showToast("记忆已清空");
@@ -323,7 +324,7 @@ export default function SettingsModal(props: {
     URL.revokeObjectURL(link.href);
   };
   const doClearLogs = async () => {
-    if (!confirm("确定清空当前日志吗？此操作不可恢复。")) return;
+    if (!(await props.confirm({ title: "清空日志", message: "确定清空当前日志吗？此操作不可恢复。", confirmText: "清空", danger: true }))) return;
     try {
       await clearLogs();
       showToast("日志已清空");
