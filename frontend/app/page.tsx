@@ -85,19 +85,24 @@ export default function Home() {
   const streamFailedFlag = useRef(false);
   const traceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
-  /* W9：左侧栏收起/展开（记忆） */
+  /* W9：左侧栏收起/展开（记忆）；W11：右侧信息面板收起（记忆） */
   const [railCollapsed, setRailCollapsed] = useState(false);
+  const [traceCollapsed, setTraceCollapsed] = useState(false);
   const onToggleRail = useCallback(() => {
     setRailCollapsed((v) => !v);
+  }, []);
+  const onToggleTrace = useCallback(() => {
+    setTraceCollapsed((v) => !v);
   }, []);
   /* 持久化副作用放 effect（updater 必须纯函数） */
   useEffect(() => {
     try {
       localStorage.setItem("myagents-rail", railCollapsed ? "collapsed" : "open");
+      localStorage.setItem("myagents-trace", traceCollapsed ? "collapsed" : "open");
     } catch (_e) {
       /* 隐私模式等场景忽略 */
     }
-  }, [railCollapsed]);
+  }, [railCollapsed, traceCollapsed]);
   const { confirm: uiConfirm, confirmDialog } = useConfirm();
   /* ----- W6-S7 设置 ----- */
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -664,10 +669,11 @@ export default function Home() {
     return () => clearInterval(t);
   }, [refreshStatus]);
 
-  /* ----- W9：恢复侧栏收起记忆 ----- */
+  /* ----- W9：恢复侧栏收起记忆；W11：恢复右侧信息面板收起记忆 ----- */
   useEffect(() => {
     try {
       setRailCollapsed(localStorage.getItem("myagents-rail") === "collapsed");
+      setTraceCollapsed(localStorage.getItem("myagents-trace") === "collapsed");
     } catch (_e) {
       /* 忽略 */
     }
@@ -680,15 +686,20 @@ export default function Home() {
         e.preventDefault();
         if (!busy) void createSession();
       }
-      // W10：Cmd/Ctrl + \ 切换侧栏
-      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+      // W10/W11：Cmd/Ctrl + \ 切换左栏；+ Shift 切换右侧信息面板。
+      // 用 e.code（Backslash）而非 e.key：Shift 组合下 e.key 是 "|"，不可靠
+      if ((e.metaKey || e.ctrlKey) && e.code === "Backslash") {
         e.preventDefault();
-        onToggleRail();
+        if (e.shiftKey) {
+          onToggleTrace();
+        } else {
+          onToggleRail();
+        }
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [busy, createSession, onToggleRail]);
+  }, [busy, createSession, onToggleRail, onToggleTrace]);
 
   /* ----- W6-S6：后台任务轮询（活跃 2s / 空闲 8s，页面隐藏降频）----- */
   useEffect(() => {
@@ -751,7 +762,11 @@ export default function Home() {
   };
 
   return (
-    <div className={`app${railCollapsed ? " rail-collapsed" : ""}`}>
+    <div
+      className={`app${railCollapsed ? " rail-collapsed" : ""}${traceCollapsed ? " trace-collapsed" : ""}`}
+      data-left={railCollapsed ? "collapsed" : "expanded"}
+      data-right={traceCollapsed ? "collapsed" : "expanded"}
+    >
       <TopBar
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
@@ -781,6 +796,12 @@ export default function Home() {
           collapsed={railCollapsed}
           onToggle={onToggleRail}
           title={railCollapsed ? "展开侧栏 (⌘\)" : "收起侧栏 (⌘\)"}
+        />
+        <SidebarEdgeToggle
+          side="right"
+          collapsed={traceCollapsed}
+          onToggle={onToggleTrace}
+          title={traceCollapsed ? "展开信息面板 (⌘⇧\)" : "收起信息面板 (⌘⇧\)"}
         />
         <Chat
           messages={messages}

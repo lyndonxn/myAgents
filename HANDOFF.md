@@ -114,6 +114,14 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W11 记录（2026-09-06，右侧信息面板收起 + 中间内容区阶梯式拉宽）
+
+- **规格**（用户提供，需求二为核心）：①右栏支持收起/展开（复用 W10 `SidebarEdgeToggle side="right"` 镜像钮）；②中间内容区（对话列 + 输入框）max-width 由 CSS 变量 `--content-max-w` 驱动阶梯拉宽：两侧全展开 720 → 任意一侧收起 800 → 两侧全收起 880（三档抽成 `--content-w-expanded/single/full` 变量）；根元素 `data-left/data-right`（expanded|collapsed）驱动；max-width transition 与侧栏宽度过渡同为 200ms ease-out（同参数同起点 → 天然同步无撕裂）；连续操作可中断可反向。
+- **实现取舍**：保留 grid 轨道动画不重构 flex（顶栏跨列规则/骑缝钮定位/响应式断点零改动，`grid-template-columns` 过渡 Chromium/FF 原生支持已实测流畅）；阶梯拉宽本质是内部容器 max-width 过渡，与外层布局引擎无关。
+- **实现**：page.tsx——`traceCollapsed` state（纯 updater + useEffect 持久化 `myagents-trace`，沿用 W10 修复模式）、挂载后从 localStorage 恢复、根 div 加 `trace-collapsed` 类 + `data-left/data-right` 属性、main.chat 内挂第二个 `SidebarEdgeToggle side="right"`；快捷键 Cmd/Ctrl+\ 切左栏、**+Shift 切右栏**（改用 `e.code==="Backslash"`——Shift 组合下 `e.key` 是 `|` 不可靠）；globals.css——W11 块：三档变量规则、`.app.trace-collapsed{--trace-w:0px}`（同 rail-collapsed 模式）+ trace 淡出、`.edge-*.collapsed` translateX(10px) 收起贴边完整可见（分界线贴视口边时半钮不出屏）、≤1080px 隐藏 edge-right（该断点 .trace 整列 display:none）。
+- **验证**：typecheck/build 全绿；8791 实例热更新冒烟——SSR 输出含 `data-left="expanded"/data-right="expanded"` 与左右两个 edge-toggle。
+- **涉及文件**：frontend/app/{page.tsx,globals.css}。
+
 ## W10 记录（2026-09-06，骑缝圆形收起/展开钮）
 
 - **规格**（用户提供）：20×20 白底圆钮、0.5px 描边 #c9c8c4、8px 单线 chevron（stroke 1.2 圆角线帽）、骑跨侧栏/内容区分界线垂直居中、hover #888→#000/描边加深 150ms、常显；点击 200ms ease-out 宽度过渡、chevron 用 rotate(180deg) 与宽度同步（单图标不换图）；收起=侧栏 0 宽完全隐藏、按钮停留原位 chevron 朝右；快捷键 Cmd/Ctrl+\；localStorage 持久化；封装 `SidebarEdgeToggle` 组件参数化 side（右侧面板后续 side="right" 复用，镜像样式已预留）；不引入组件库/SVG 内联/无阴影渐变模糊/不改侧栏内部结构。

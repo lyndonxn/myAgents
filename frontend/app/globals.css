@@ -45,7 +45,7 @@ body{
 /* ============ APP GRID ============ */
 .app{
   display:grid;
-  grid-template-columns:var(--rail-w,252px) minmax(0,1fr) 340px;
+  grid-template-columns:var(--rail-w,252px) minmax(0,1fr) var(--trace-w,340px);
   grid-template-rows:56px minmax(0,1fr);
   height:100vh;
 }
@@ -582,7 +582,7 @@ body{
 .rail-search .rs-kbd{font-family:var(--mono);font-size:9px;color:var(--mute);}
 
 /* responsive */
-@media (max-width:1240px){.app{grid-template-columns:var(--rail-w,224px) minmax(0,1fr) 300px;}}
+@media (max-width:1240px){.app{grid-template-columns:var(--rail-w,224px) minmax(0,1fr) var(--trace-w,300px);}}
 @media (max-width:1080px){.app{grid-template-columns:224px minmax(0,1fr);}.trace{display:none;}}
 @media (max-width:840px){.app{grid-template-columns:minmax(0,1fr);}.rail{display:none;}.chat .ctx-rail{display:none;}.chat-inner,.composer-inner{padding:0 20px;}.quick-grid{grid-template-columns:1fr;}}
 .modal{position:fixed;inset:0;z-index:50;background:rgba(15,23,42,.32);display:none;align-items:center;justify-content:center;padding:20px;}
@@ -826,3 +826,30 @@ body{
 .edge-right{right:-10px;transform:none;}
 .edge-right svg{transform:scaleX(-1);}
 .edge-right.collapsed svg{transform:scaleX(-1) rotate(180deg);}
+
+/* ============ W11 · 中间内容区阶梯式拉宽 ============ */
+/* 根元素 data-left / data-right（expanded|collapsed）驱动内容列最大宽度三档：
+   两侧全展开 → 任意一侧收起 → 两侧全收起。三档抽成变量便于微调。 */
+.app{
+  --content-w-expanded:720px;
+  --content-w-single:800px;
+  --content-w-full:880px;
+  --content-max-w:var(--content-w-expanded);
+}
+.app[data-left="collapsed"],
+.app[data-right="collapsed"]{--content-max-w:var(--content-w-single);}
+.app[data-left="collapsed"][data-right="collapsed"]{--content-max-w:var(--content-w-full);}
+.chat-inner,
+.composer-inner{
+  max-width:var(--content-max-w);
+  transition:max-width 200ms ease-out;
+}
+/* 右栏收起：宽度归零（同 rail-collapsed 模式）+ visibility+opacity 淡出（保留栅格过渡） */
+.app.trace-collapsed{--trace-w:0px;}
+.app .trace{overflow:hidden;transition:opacity 200ms ease-out,visibility 200ms ease-out;}
+.app.trace-collapsed .trace{visibility:hidden;opacity:0;}
+/* 窄屏 .trace 整列隐藏时，右缘骑缝钮一并隐藏 */
+@media (max-width:1080px){.edge-right{display:none;}}
+/* 右缘骑缝钮收起态：贴边完整可见（向左让位 10px） */
+.edge-right.collapsed{transform:translateX(-10px);}
+.edge-left.collapsed{transform:translateX(10px);}
