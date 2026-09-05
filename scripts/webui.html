@@ -182,7 +182,7 @@ body{
 
 /* ============ CHAT COLUMN ============ */
 .chat{
-  display:flex;flex-direction:column;min-width:0;
+  display:flex;flex-direction:column;min-width:0;position:relative;
   background:
     radial-gradient(900px 380px at 70% -8%, rgba(37,99,235,0.06), transparent 60%),
     var(--bg);
@@ -363,8 +363,9 @@ body{
 }
 .composer-inner{max-width:760px;margin:0 auto;padding:0 40px;}
 .inputrow{
-  display:flex;align-items:stretch;
-  border:1px solid var(--line-2);background:var(--panel);border-radius:10px;
+  display:flex;flex-direction:column;
+  border:1px solid var(--line-2);background:var(--panel);border-radius:12px;
+  padding:4px 10px 8px;
   transition:border-color .15s,box-shadow .15s;
   box-shadow:var(--shadow-sm);
 }
@@ -372,10 +373,12 @@ body{
 .inputrow textarea{
   flex:1;border:none;outline:none;resize:none;background:transparent;
   font-family:var(--sans);font-size:13.5px;color:var(--ink);
-  padding:13px 16px;line-height:1.5;max-height:132px;
+  padding:10px 8px 6px;line-height:1.5;max-height:132px;
   overflow-y:auto;
 }
 .inputrow textarea::placeholder{color:var(--mute);}
+.input-actions{display:flex;align-items:center;gap:4px;}
+.ia-spacer{flex:1;}
 .iconbtn{
   border:none;background:none;cursor:pointer;
   font-size:14px;color:var(--mute);
@@ -385,20 +388,24 @@ body{
 }
 .iconbtn:hover{color:var(--ink);background:var(--bg);}
 .iconbtn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
-.filebtn{width:auto;font-size:12px;font-weight:500;color:var(--ink-2);}
-.filebtn span{white-space:nowrap;}
+/* W5：＋ 上传按钮（图1 左下角圆形） */
+.iconbtn.addbtn{
+  width:32px;height:32px;min-width:32px;padding:0;align-self:center;
+  border:1px solid var(--line-2);border-radius:50%;background:var(--panel);
+}
+.iconbtn.addbtn:hover{color:var(--blue);border-color:var(--blue-line);background:var(--blue-soft);}
+/* W5：圆形图标发送键（图1 右下角） */
 .sendbtn{
   background:var(--blue);color:#fff;border:none;cursor:pointer;
-  font-size:13px;font-weight:500;
-  min-width:84px;padding:0 18px;border-radius:0 9px 9px 0;
-  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  width:34px;height:34px;padding:0;border-radius:50%;align-self:center;
+  display:inline-flex;align-items:center;justify-content:center;
   transition:background .2s,color .2s;
 }
+.sendbtn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;}
 .sendbtn:hover{background:var(--blue-hover);}
 .sendbtn:disabled{background:var(--bg);color:var(--mute);cursor:default;}
 .sendbtn.stop{background:var(--red);}
 .sendbtn.stop:hover{background:#B91C1C;}
-.stop-square{width:9px;height:9px;border-radius:1px;background:currentColor;display:inline-block;}
 .composer-note{
   margin-top:9px;font-family:var(--mono);font-size:9px;color:var(--mute);
   letter-spacing:0.06em;display:flex;justify-content:space-between;
@@ -582,7 +589,7 @@ body{
 /* responsive */
 @media (max-width:1240px){.app{grid-template-columns:224px minmax(0,1fr) 300px;}}
 @media (max-width:1080px){.app{grid-template-columns:224px minmax(0,1fr);}.trace{display:none;}}
-@media (max-width:840px){.app{grid-template-columns:minmax(0,1fr);}.rail{display:none;}.chat-inner,.composer-inner{padding:0 20px;}.quick-grid{grid-template-columns:1fr;}}
+@media (max-width:840px){.app{grid-template-columns:minmax(0,1fr);}.rail{display:none;}.ctx-rail{display:none;}.chat-inner,.composer-inner{padding:0 20px;}.quick-grid{grid-template-columns:1fr;}}
 .modal{position:fixed;inset:0;z-index:50;background:rgba(15,23,42,.32);display:none;align-items:center;justify-content:center;padding:20px;}
 .modal.show{display:flex}.modal-panel{width:min(720px,100%);max-height:88vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-md);padding:22px;}
 .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.modal-head h2{font-size:16px}.modal-close{border:0;background:none;font-size:20px;color:var(--mute);cursor:pointer}
@@ -593,7 +600,12 @@ body{
 .settings-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.actionbtn{border:1px solid var(--line-2);border-radius:6px;padding:8px 13px;background:var(--panel);cursor:pointer}.actionbtn.primary{background:var(--blue);border-color:var(--blue);color:white}
 .settings-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px}.settings-tabs button{border:0;background:none;color:var(--mute);padding:8px 12px;cursor:pointer;border-bottom:2px solid transparent}.settings-tabs button.active{color:var(--blue);border-color:var(--blue);font-weight:600}.settings-page{display:none}.settings-page.active{display:grid}.log-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:10px}.log-view{height:340px;overflow:auto;white-space:pre-wrap;background:#101827;color:#CBD5E1;border-radius:6px;padding:12px;font:11px/1.65 var(--mono)}
 .mem-item{border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:8px}.mem-item .mem-q{font-weight:600;font-size:13px;display:flex;justify-content:space-between;gap:8px;align-items:center}.mem-item .mem-a{font-size:12px;color:var(--mute);margin-top:3px}.mem-item .mem-meta{font-size:11px;color:var(--mute);opacity:.75;margin-top:3px}.mem-item .mem-del{flex-shrink:0}
-.ctx-line{display:flex;gap:3px;height:4px;margin-bottom:9px}.ctx-line .seg{flex:1;height:4px;border-radius:2px;background:var(--line);transition:background .25s}.ctx-label{font-family:var(--mono);font-size:9px;color:var(--mute)}
+/* W5：上下文分段表——页面左侧竖轨，用量越高颜色由绿渐变到红（HSL 插值 142°→0°） */
+.ctx-rail{
+  position:absolute;left:10px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:3px;width:14px;z-index:5;
+}
+.ctx-rail .seg{height:4px;width:100%;border-radius:2px;background:var(--line);transition:background .25s}
 .iconbtn.recording{color:var(--red);border-color:var(--red);animation:micPulse 1s infinite}@keyframes micPulse{50%{box-shadow:0 0 0 4px rgba(220,38,38,.14)}}
 :root[data-theme="dark"]{--bg:#10141B;--panel:#171C25;--ink:#EEF2F8;--ink-2:#B7C0CE;--mute:#7F8998;--line:#293241;--line-2:#3A4658;--blue-soft:#172A4D;--blue-line:#31558F} :root[data-theme="dark"] .topbar{background:rgba(23,28,37,.9)}
 
@@ -787,19 +799,22 @@ body{
 
   <!-- ======== CHAT ======== -->
   <main class="chat">
+    <div class="ctx-rail" id="ctxLine" title="上下文容量"></div>
     <div class="chat-scroll scroll" id="chatScroll">
       <div class="chat-inner" id="chatInner"></div>
     </div>
     <div class="composer">
       <div class="composer-inner">
-        <div class="ctx-line" id="ctxLine" title="上下文容量"></div>
         <div class="img-preview" id="imgPreview" hidden><img id="imgThumb" alt="待搜索图片"><button class="img-clear" onclick="clearImage()" title="移除图片" aria-label="移除图片">×</button></div>
         <div class="inputrow">
-          <button class="iconbtn" id="micBtn" title="语音输入" aria-label="语音输入"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"></path></svg></button>
-          <button class="iconbtn filebtn" id="imgBtn" title="上传图片" aria-label="上传图片"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8l8.4-8.4"></path></svg><span>图片</span></button>
-          <input type="file" id="imgFile" accept="image/*" hidden>
           <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
-          <button class="sendbtn" id="sendBtn" onclick="onSend()">发送</button>
+          <div class="input-actions">
+            <button class="iconbtn addbtn" id="imgBtn" title="上传图片（也可直接拖入）" aria-label="上传图片"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+            <span class="ia-spacer"></span>
+            <button class="iconbtn" id="micBtn" title="语音输入" aria-label="语音输入"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"></path></svg></button>
+            <input type="file" id="imgFile" accept="image/*" hidden>
+            <button class="sendbtn" id="sendBtn" onclick="onSend()" aria-label="发送消息"></button>
+          </div>
         </div>
         <div class="composer-note">
           <span>支持截图以图搜库 · 回答均附引用来源</span>
@@ -1500,11 +1515,14 @@ function matchAnswer(text){
 
 const ta = document.getElementById('input');
 let pendingImage=null;
+/* W5：圆形图标发送键（↑ 发送 / ■ 停止） */
+const SVG_SEND='<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>';
+const SVG_STOP='<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;stroke:none"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"></rect></svg>';
 function syncSendBtn(){
   const btn=document.getElementById('sendBtn');
   btn.disabled=!busy&&!ta.value.trim()&&!pendingImage;
   btn.classList.toggle('stop',busy);
-  btn.innerHTML=busy?'<span class="stop-square" aria-hidden="true"></span><span>停止</span>':'<span>发送</span>';
+  btn.innerHTML=busy?SVG_STOP:SVG_SEND;
   btn.setAttribute('aria-label',busy?'停止生成':'发送消息');
   btn.title=busy?'停止生成':'发送消息';
 }

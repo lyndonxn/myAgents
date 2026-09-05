@@ -114,6 +114,18 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W5 切片记录（2026-09-05，composer 上下结构 + 左侧上下文竖轨 + 圆形图标发送键）
+
+- **背景**：用户三项目标：①「图片」上传改图1 的上下结构（textarea 整行 + 底部操作行）并约束输入区最大宽度；②上下文表移到页面左侧竖排（图2 左缘样式）；③发送键改圆形图标（↑/■ 两态）。
+- **验证证据**：`unittest discover` 191/191 OK；node --check 通过；浏览器冒烟：composerWidth=760（与聊天列同宽约束）、sendArrow=true、竖轨 24 段、12% → 3 段绿 rgb(34,180,46)、93% → 22 段红、明暗 token 自适应；视觉验收由用户实测确认。
+- **实现（仅 scripts/webui.html）**：
+  - composer 重排：`.inputrow` 改纵向（textarea 整行 + `.input-actions` 底部行）；「图片」文字按钮改为左下 `＋` 圆形按钮（.addbtn，hover 蓝调，仍走 imgBtn/imgFile 与拖入同管道）；语音钮与发送键移至右侧；`.composer-inner` 保持 760px 上限（与 chat-inner 一致）。
+  - 发送键：34px 圆形，`syncSendBtn` 换 SVG 两态（↑ 发送 / 红底 ■ 停止），aria-label/title 保留；删除旧 `.filebtn`/`.stop-square` 样式。
+  - 上下文竖轨：`#ctxLine` 从 composer 移入 `.chat`（`.ctx-rail`，absolute left:10px 垂直居中，24 段纵向，配色逻辑不变 HSL 绿→红），`.chat` 加 position:relative；≤840px 隐藏。
+- **涉及文件**：scripts/webui.html。
+
+---
+
 ## W4 切片记录（2026-09-05，输入区/状态条/图片预览/上下文表 四项视觉与交互打磨）
 
 - **背景**：用户实测反馈四项：①长文本输入撑爆视觉（图1）；②状态条字体突兀（对齐原型图2）；③图片预览改小图+右上角关闭、支持外部拖入；④上下文条改分段样式（图4）并按用量绿→红着色（用户明确要求色彩渐变，HSL 插值属运行时色，例外于"仅既有 tokens"口径）。
