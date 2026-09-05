@@ -44,6 +44,8 @@ export default function Chat(props: {
   messages: MsgVM[];
   welcomeDocs?: { docCount: string; chunks: string };
   handlers: ChatHandlers;
+  /** 流式/消息数变化信号：仅此变化才触发跟随滚动（轮询重渲染不再打扰阅读） */
+  streamTick?: number;
 }) {
   const msgs = props.messages;
   const showWelcome = msgs.length === 1 && msgs[0].kind === "intro";
@@ -51,9 +53,11 @@ export default function Chat(props: {
   const scRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
 
+  // W6-S8 修复：仅在消息数/流式更新时跟随滚动——之前每次渲染（含 2s/5s 轮询）都强制回底，
+  // 用户翻历史记录时会一直被拽到底部造成上下闪烁
   useLayoutEffect(() => {
     if (pinnedRef.current && scRef.current) scRef.current.scrollTop = scRef.current.scrollHeight;
-  });
+  }, [props.messages.length, props.streamTick]);
 
   return (
     <div

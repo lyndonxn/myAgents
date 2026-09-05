@@ -69,7 +69,7 @@ export default function Home() {
   /* 流式发送状态 */
   const [inputValue, setInputValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const seqRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const playerRef = useRef<{
@@ -728,7 +728,12 @@ export default function Home() {
         onManageKb={() => openSettings("kb")}
       />
       <main className="chat">
-        <Chat messages={messages} welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }} handlers={handlers} />
+        <Chat
+          messages={messages}
+          welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }}
+          handlers={handlers}
+          streamTick={tick}
+        />
         <Composer
           ctxPct={ctxPct}
           value={inputValue}
