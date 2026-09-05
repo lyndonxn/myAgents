@@ -1,6 +1,6 @@
 # HANDOFF — myAgents Agent 化改造（全部完成 ✅）
 
-分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**未 push**（未获授权）。
+分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**已推送**（2026-09-05 用户授权，`9e6791f..a7489b9 main -> main`，共 41 提交含 W1–W8 与 Next.js 迁移全部工作；推送前已做密钥快扫）。
 规格：`spec/agent-core-modules.md`（S 阶段 + T 阶段）。契约：`AGENTS.md`。
 
 ## 第一期 S1–S5（五大核心模块补全，已验收）
