@@ -80,6 +80,7 @@ export default function Home() {
     active: boolean;
   } | null>(null);
   const streamFailedFlag = useRef(false);
+  const traceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
   /* ----- W6-S7 设置 ----- */
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -144,9 +145,12 @@ export default function Home() {
   const openSession = useCallback(
     async (id: string, known?: SessionInfo[]) => {
       setCurrentSession(id);
-      setSources([]);
-      setVitals({ recall: "—", time: "—", tok: "—", web: "待命" });
-      setTraceSteps(IDLE_STEPS);
+      // W6-S8：重开当前会话（回答后的延迟刷新）不重置轨迹/来源/指标，避免装饰动画终态被清掉
+      if (id !== currentSession) {
+        setSources([]);
+        setVitals({ recall: "—", time: "—", tok: "—", web: "待命" });
+        setTraceSteps(IDLE_STEPS);
+      }
       try {
         const list = known ?? sessions;
         if (!list.some((s) => s.id === id)) {
@@ -185,7 +189,7 @@ export default function Home() {
         showToast((e as Error).message || "加载会话失败", true);
       }
     },
-    [activeWorkspace, sessions, showToast],
+    [activeWorkspace, currentSession, sessions, showToast],
   );
 
   const createSession = useCallback(
@@ -276,17 +280,23 @@ export default function Home() {
 
   /* ----- W6-S6：检索轨迹动画（装饰性，与 legacy runTrace 一致）----- */
   const runTrace = useCallback(() => {
+    if (traceTimerRef.current) clearInterval(traceTimerRef.current);
     setTraceSteps(TRACE_FLOW.map((s) => ({ ...s, state: "idle" as const })));
     let i = 0;
-    const next = () => {
-      if (i > 0) setTraceSteps((prev) => prev.map((s, idx) => (idx === i - 1 ? { ...s, state: "done" as const } : s)));
-      if (i >= TRACE_FLOW.length) return;
-      const cur = i;
-      setTraceSteps((prev) => prev.map((s, idx) => (idx === cur ? { ...s, state: "running" as const } : s)));
+    traceTimerRef.current = setInterval(() => {
+      setTraceSteps((prev) =>
+        prev.map((s, idx) => {
+          if (idx === i) return { ...s, state: "running" as const };
+          if (idx < i) return { ...s, state: "done" as const };
+          return s;
+        }),
+      );
       i += 1;
-      setTimeout(next, 380 + Math.random() * 260);
-    };
-    next();
+      if (i >= TRACE_FLOW.length) {
+        if (traceTimerRef.current) clearInterval(traceTimerRef.current);
+        traceTimerRef.current = null;
+      }
+    }, 420);
   }, []);
 
   /* ----- 流式问答（队列式播放器：delta 进缓冲、打字机节奏渲染，done 后收 followups）----- */

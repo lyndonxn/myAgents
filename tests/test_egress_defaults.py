@@ -552,18 +552,21 @@ class EgressDefaultsTests(unittest.TestCase):
     # ---------------- WebUI 静态文案（ACC-U3-02 / 设置页说明 / 清空确认） ----------------
 
     def test_webui_static_disclosure(self):
-        """webui.html 含答案状态行、设置页数据外发说明与清空会话确认文案。"""
-        html = (REPO / "scripts" / "webui.html").read_text(encoding="utf-8")
-        self.assertIn("本回答来自 Web 搜索降级", html, "ACC-U3-02 降级状态行")
-        self.assertIn("本回答使用了 Web 搜索", html, "web_used 状态行")
-        self.assertIn("开启后问题可能发送到互联网", html, "联网降级说明文案")
-        self.assertIn("记忆数据保存到本机 data/", html, "记忆落盘说明文案")
-        self.assertIn("可同时删除该会话长期记忆", html, "清空会话确认文案")
-        # 状态行渲染条件（degraded 优先、web_used 次之、皆 false 不渲染）
-        self.assertIn("metrics.degraded?'<div class=\"block cite-warn\">本回答来自 Web 搜索降级</div>'", html)
-        self.assertIn("metrics.web_used?'<div class=\"block cite-warn\">本回答使用了 Web 搜索</div>'", html)
+        """前端源码（Next.js，W6 迁移自 webui.html）含答案状态行、设置页数据外发说明与清空会话确认文案。"""
+        frontend = REPO / "frontend"
+        answer_card = (frontend / "components" / "AnswerCard.tsx").read_text(encoding="utf-8")
+        settings = (frontend / "components" / "SettingsModal.tsx").read_text(encoding="utf-8")
+        page_src = (frontend / "app" / "page.tsx").read_text(encoding="utf-8")
+        self.assertIn("本回答来自 Web 搜索降级", answer_card, "ACC-U3-02 降级状态行")
+        self.assertIn("本回答使用了 Web 搜索", answer_card, "web_used 状态行")
+        self.assertIn("开启后问题可能发送到互联网", settings, "联网降级说明文案")
+        self.assertIn("记忆数据保存到本机 data/", settings, "记忆落盘说明文案")
+        self.assertIn("可同时删除该会话长期记忆", page_src, "清空会话确认文案")
+        # 状态行渲染条件（degraded 优先、web_used 次之、皆 false 不渲染——Next 版三元条件）
+        self.assertIn("data.metrics?.degraded ?", answer_card, "degraded 渲染条件")
+        self.assertIn("data.metrics?.web_used ?", answer_card, "web_used 渲染条件")
 
-        print("✓ webui.html 静态断言：状态行与说明/确认文案齐备，渲染条件正确")
+        print("✓ 前端源码静态断言：状态行与说明/确认文案齐备，渲染条件正确")
 
     # ---------------- parse_opt_bool 单元 ----------------
 
@@ -703,28 +706,27 @@ class WebSettingsEgressSwitchTests(unittest.TestCase):
     # ---------------- WebUI 静态断言（控件/payload/hint） ----------------
 
     def test_webui_static_egress_switches(self):
-        """webui 静态断言：三个下拉 id 存在、保存 payload 含 tools/memory 节、既有 hint 未破坏。"""
-        html = (REPO / "scripts" / "webui.html").read_text(encoding="utf-8")
-        for control_id in ("cfgKbFallbackWeb", "cfgLongTermMemory", "cfgEntitiesMemory"):
-            self.assertIn(f'id="{control_id}"', html, f"控件 {control_id} 应存在")
-        # 保存 payload 含 tools/memory 节（布尔经 'true' 字符串比较）
-        self.assertIn("tools:{kb_fallback_web:document.getElementById('cfgKbFallbackWeb').value==='true'}", html)
-        self.assertIn(
-            "memory:{long_term_enabled:document.getElementById('cfgLongTermMemory').value==='true',"
-            "entities_enabled:document.getElementById('cfgEntitiesMemory').value==='true'}", html)
-        # 加载回填 JS（读 cfg.tools/cfg.memory）
-        self.assertIn("cfg.tools||{}).kb_fallback_web", html)
-        self.assertIn("cfg.memory||{}).long_term_enabled", html)
-        self.assertIn("cfg.memory||{}).entities_enabled", html)
+        """前端源码静态断言（W6 迁移自 webui.html）：三个开关存在、保存 payload 含 tools/memory 节、既有 hint 未破坏。"""
+        settings = (REPO / "frontend" / "components" / "SettingsModal.tsx").read_text(encoding="utf-8")
+        for state_name in ("kbFallbackWeb", "memLong", "memEntities"):
+            self.assertIn(f"const [{state_name}, set{state_name[0].upper()}{state_name[1:]}]", settings, f"开关状态 {state_name} 应存在")
+        # 保存 payload 字段（布尔经 'true' 字符串比较）
+        self.assertIn('kb_fallback_web: kbFallbackWeb === "true"', settings)
+        self.assertIn('long_term_enabled: memLong === "true"', settings)
+        self.assertIn('entities_enabled: memEntities === "true"', settings)
+        # 加载回填（读 cfg.tools/cfg.memory）
+        self.assertIn("(cfg.tools || {}).kb_fallback_web", settings)
+        self.assertIn("(cfg.memory || {}).long_term_enabled", settings)
+        self.assertIn("(cfg.memory || {}).entities_enabled", settings)
         # 三处控件 label
-        self.assertIn("联网降级（KB 未命中时自动搜索）", html)
-        self.assertIn("<label>长期记忆</label>", html)
-        self.assertIn("<label>实体记忆</label>", html)
-        # 既有 G3 披露 hint（原 786/806 行）未被破坏
-        self.assertIn("数据外发与记忆（默认关闭）：联网降级开启后问题可能发送到互联网", html)
-        self.assertIn("长期记忆与实体记忆默认关闭；开启后成功问答会写入本机 data/memory/", html)
+        self.assertIn("联网降级（KB 未命中时自动搜索）", settings)
+        self.assertIn("<label>长期记忆</label>", settings)
+        self.assertIn("<label>实体记忆</label>", settings)
+        # 既有 G3 披露 hint 未被破坏
+        self.assertIn("数据外发与记忆（默认关闭）：联网降级开启后问题可能发送到互联网", settings)
+        self.assertIn("长期记忆与实体记忆默认关闭；开启后成功问答会写入本机 data/memory/", settings)
 
-        print("✓ webui 静态断言：三控件/payload 节/回填/label/hint 文案齐备")
+        print("✓ 前端源码静态断言：三开关/payload/回填/label/hint 文案齐备")
 
 
 if __name__ == "__main__":

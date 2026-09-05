@@ -313,19 +313,19 @@ class MemoryGovernanceTests(unittest.TestCase):
     # ---------------- webui 静态文案 ----------------
 
     def test_webui_memory_page_static(self):
-        """webui.html 含记忆设置页：搜索/刷新/清空、逐条删除、实体事实展示与确认文案。"""
-        html = (REPO / "scripts" / "webui.html").read_text(encoding="utf-8")
-        self.assertIn('data-settings-page="memoryPage"', html, "记忆设置页标签")
-        self.assertIn("此处可查看被记住的内容，并逐条撤回或全部清除", html)
-        self.assertIn("async function loadMemory()", html)
-        self.assertIn("fetch(`/api/memory?${params}`)", html)
-        self.assertIn("fetch('/api/memory/entities')", html)
-        self.assertIn("method:'DELETE'", html, "逐条删除调用 DELETE")
-        self.assertIn("'/api/memory/clear'", html, "清空全部调用 clear 接口")
-        self.assertIn("确定清空全部长期记忆与实体记忆吗", html, "清空确认文案")
-        self.assertIn("长期记忆未开启", html, "未开启状态提示")
+        """前端源码（Next.js，W6 迁移自 webui.html）含记忆设置页：搜索/刷新/清空、逐条删除、实体事实展示与确认文案。"""
+        settings = (REPO / "frontend" / "components" / "SettingsModal.tsx").read_text(encoding="utf-8")
+        api_src = (REPO / "frontend" / "lib" / "api.ts").read_text(encoding="utf-8")
+        self.assertIn("此处可查看被记住的内容，并逐条撤回或全部清除", settings)
+        self.assertIn("export const loadMemory", api_src)
+        self.assertIn("/api/memory?q=${encodeURIComponent(q)}", api_src)
+        self.assertIn("/api/memory/entities", api_src)
+        self.assertIn('method: "DELETE"', api_src, "逐条删除调用 DELETE")
+        self.assertIn("/api/memory/clear", api_src, "清空全部调用 clear 接口")
+        self.assertIn("确定清空全部长期记忆与实体记忆吗", settings, "清空确认文案")
+        self.assertIn("长期记忆未开启", settings, "未开启状态提示")
 
-        print("✓ webui.html 记忆页静态断言：标签/接口调用/确认文案齐备")
+        print("✓ 前端源码静态断言：记忆页文案/接口调用/确认文案齐备")
 
 
 if __name__ == "__main__":

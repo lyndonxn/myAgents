@@ -477,7 +477,7 @@ export default function SettingsModal(props: {
 
         {tab === "memory" && (
           <div className="settings-page active">
-            <div className="settings-hint">此处可查看被记住的内容，并逐条撤回或全部清除。</div>
+            <div className="settings-hint">长期记忆与实体记忆默认关闭；开启后成功问答会写入本机 data/memory/。此处可查看被记住的内容，并逐条撤回或全部清除。</div>
             <div className="log-toolbar">
               <input style={{ flex: 1 }} placeholder="搜索记忆内容" value={memQuery} onChange={(e) => setMemQuery(e.target.value)} />
               <button className="actionbtn" type="button" onClick={() => void refreshMemory(memQuery)}>刷新</button>

@@ -42,7 +42,8 @@ from agents.task_runner import TaskRunner
 from agents.task_store import TaskStore
 from agents.web_store import WebStore
 
-PAGE = PROJECT_ROOT / "scripts" / "webui.html"
+# W6-S8：legacy 单文件页已退役为备份副本（webui.html 移除，git 历史/标签 webui-html-final 可回溯）
+PAGE = PROJECT_ROOT / "scripts" / "webui.legacy.html"
 # W6：Next.js 静态导出目录（frontend/out）。存在则优先伺服；缺失回退 legacy 单文件页
 EXPORT_DIR = PROJECT_ROOT / "frontend" / "out"
 VENDOR_DIR = PROJECT_ROOT / "scripts" / "vendor"
