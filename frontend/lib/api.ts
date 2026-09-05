@@ -119,6 +119,33 @@ export const api = {
     jpost("/api/feedback", { message_id: messageId, value }),
 };
 
+/* ----- 以图搜库（/api/ask_image 非流式）----- */
+
+export interface AskImageResult {
+  answer: string;
+  error?: string;
+  sources?: string[];
+  sources_detail?: SourceDetail[];
+  plan?: PlanInfo;
+  metrics?: MetricsInfo;
+  message_id?: number;
+}
+
+export async function askImage(payload: {
+  image_data_url: string;
+  question: string;
+  session_id?: string;
+}): Promise<AskImageResult> {
+  const res = await fetch("/api/ask_image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => ({}))) as AskImageResult & { error?: string };
+  if (!res.ok || data.error) throw new Error(data.error || `请求失败（${res.status}）`);
+  return data;
+}
+
 /* ----- 流式问答（NDJSON：stage → meta → delta → done → followups?）----- */
 
 export class ModelNotConfiguredError extends Error {

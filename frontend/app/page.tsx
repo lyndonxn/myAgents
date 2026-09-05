@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  askImage,
   askStream,
   ModelNotConfiguredError,
   type MetricsInfo,
@@ -16,7 +17,7 @@ import {
 import TopBar, { type IndexState } from "@/components/TopBar";
 import Rail, { type KbSummary } from "@/components/Rail";
 import Chat, { type AgentStreamMsg, type ChatHandlers, type MsgVM } from "@/components/Chat";
-import Composer from "@/components/Composer";
+import Composer, { type PendingImage } from "@/components/Composer";
 import TracePanel from "@/components/TracePanel";
 import AnswerDetailModal from "@/components/AnswerDetailModal";
 
@@ -53,7 +54,21 @@ export default function Home() {
     finished: boolean;
     active: boolean;
   } | null>(null);
+  const streamFailedFlag = useRef(false);
   const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
+  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+
+  const onPickImage = useCallback(
+    (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setPendingImage({ name: file.name, dataUrl: String(reader.result) });
+      };
+      reader.readAsDataURL(file);
+    },
+    [],
+  );
+  const onClearImage = useCallback(() => setPendingImage(null), []);
 
   const showToast = useCallback((msg: string, error = false) => {
     setToast({ msg, error });
@@ -220,11 +235,13 @@ export default function Home() {
         return;
       }
       const text = (textArg ?? inputValue).trim();
-      if (!text) return;
+      if (!text && !pendingImage) return;
       if (!currentSession) {
         showToast("会话未就绪，请稍候", true);
         return;
       }
+      const image = pendingImage;
+      setPendingImage(null);
       setInputValue("");
       setBusy(true);
       const key = `s${++seqRef.current}`;
@@ -239,7 +256,36 @@ export default function Home() {
         question: text,
         feedback: "",
       };
-      setMessages((prev) => [...prev, { kind: "user", text }, { kind: "stream", data: msg }]);
+      const displayText = text || (image ? `图片：${image.name}` : "");
+      setMessages((prev) => [...prev, { kind: "user", text: displayText }, { kind: "stream", data: msg }]);
+      if (image) {
+        /* 以图搜库：/api/ask_image 非流式，一次性出卡 */
+        try {
+          const data = await askImage({ image_data_url: image.dataUrl, question: text, session_id: currentSession });
+          msg.phase = "done";
+          msg.shown = data.answer || "";
+          msg.sources = data.sources || [];
+          msg.sourcesDetail = data.sources_detail || [];
+          msg.plan = data.plan;
+          msg.metrics = data.metrics;
+          msg.messageId = data.message_id != null ? String(data.message_id) : undefined;
+          setTick((t) => t + 1);
+        } catch (e) {
+          msg.phase = "done";
+          msg.shown = `请求失败：${(e as Error).message}`;
+          setTick((t) => t + 1);
+          streamFailedFlag.current = true;
+        } finally {
+          controllerRef.current = null;
+          setBusy(false);
+          if (!streamFailedFlag.current) {
+            void refreshSessionsList();
+            setMemCount((m) => m + 1);
+          }
+          streamFailedFlag.current = false;
+        }
+        return;
+      }
       const controller = new AbortController();
       controllerRef.current = controller;
       let streamFailed = false;
@@ -529,9 +575,12 @@ export default function Home() {
           ctxPct={ctxPct}
           value={inputValue}
           busy={busy}
+          pendingImage={pendingImage}
           onChange={setInputValue}
           onSubmit={() => void onSend()}
           onStop={onStop}
+          onPickImage={onPickImage}
+          onClearImage={onClearImage}
         />
       </main>
       <TracePanel />
