@@ -184,6 +184,8 @@ class Handler(BaseHTTPRequestHandler):
             "answer": answer.final_answer or "",
             "error": answer.error or "",
             "sources": answer.sources,
+            # W1：结构化来源详情（与 sources 下标一一对应；旧 answer 对象缺失时回退空表）
+            "sources_detail": list(getattr(answer, "sources_detail", []) or []),
             "plan": {
                 "summary": answer.plan.plan_summary,
                 "steps": [
@@ -218,7 +220,8 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._answer_payload(answer)
         self.store.add_message(session_id, "user", question)
         message_id = self.store.add_message(
-            session_id, "assistant", payload["answer"], payload["sources"], payload["plan"], payload["metrics"]
+            session_id, "assistant", payload["answer"], payload["sources"], payload["plan"], payload["metrics"],
+            sources_detail=payload.get("sources_detail", []),  # W1：证据卡详情跨重启复用
         )
         # 持久化会话记忆滚动摘要（S4）：ask 内 maybe_compress 已更新，落库跨重启复用
         summary = getattr(self.agent.memory, "summary", "")
@@ -649,15 +652,19 @@ class Handler(BaseHTTPRequestHandler):
             def emit(event, **data):
                 self.wfile.write((json.dumps({"event": event, **data}, ensure_ascii=False) + "\n").encode("utf-8"))
                 self.wfile.flush()
-            emit("stage", name="规划与检索")
+            # W1：ask 内部真阶段事件经 on_stage 转发（检索知识库→生成答案）；首条覆盖 ask 启动前的空窗
+            def emit_stage(name):
+                emit("stage", name=name)
+            emit_stage("规划与检索")
             try:
                 with self.lock:
                     self.agent.memory = self.store.memory(session_id)
                     answer = self.agent.ask(  # S4：长期记忆按会话读写；G3：remember/allow_web 请求级许可
-                        question, session_id=session_id, remember=remember, allow_web=allow_web
+                        question, session_id=session_id, remember=remember, allow_web=allow_web,
+                        on_stage=emit_stage,  # W1：阶段回调异常在 ask 内部吞掉，不影响生成
                     )
                 response = self._persist_answer(session_id, workspace["id"], question, answer)
-                emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], plan=response["plan"], metrics=response["metrics"])
+                emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], sources_detail=response.get("sources_detail", []), plan=response["plan"], metrics=response["metrics"])
                 text = response["answer"]
                 for start in range(0, len(text), 24):
                     emit("delta", text=text[start:start + 24])

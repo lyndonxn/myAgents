@@ -628,7 +628,13 @@ class TaskRunnerTests(unittest.TestCase):
         )
         payload = handler._answer_payload(answer)
         metrics = payload["metrics"]
-        self.assertEqual(set(payload), {"answer", "error", "sources", "plan", "metrics"}, "payload 顶层键不变")
+        # W1：顶层新增 sources_detail 键（与 sources 下标对应的结构化详情，加法扩展）；旧键不变
+        self.assertEqual(
+            set(payload),
+            {"answer", "error", "sources", "sources_detail", "plan", "metrics"},
+            "payload 顶层键不变（W1 加 sources_detail）",
+        )
+        self.assertEqual(payload["sources_detail"], [], "旧 answer 无详情时回退空表")
         self.assertEqual(metrics["citations_valid"], 1)
         self.assertEqual(metrics["citations_invalid"], 2)
         self.assertEqual(

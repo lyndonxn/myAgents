@@ -114,6 +114,22 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W2 切片记录（2026-09-05，用户驱动前端改版续篇：结构化证据卡 + 真阶段事件）
+
+- **背景**：W1 的后续切片（用户「继续」确认）：demo 证据卡的三级结构（标题/路径/引句）需要真实数据源；「检索→生成」两段状态需要后端真事件而非前端假切换。
+- **验证证据**：`unittest discover` 188/188 OK（W1 后 179 → 新增 test_sources_detail_stage 9 用例）；compileall 通过；node --check 通过；全程离线（ScriptedLLM + TF-IDF + 临时 KB + 假 NDJSON fetch 桩浏览器实测：两段 stage 状态切换、打字机、富证据卡、历史回放）。
+- **实现**：
+  - `tools.py`：`tool_search_knowledge_base` 输出新增 `sources_detail`（与 sources 下标一一对应、同去重）；新增 `_hit_detail`（title=标题路径末段（无标题回退文件名）/path=库内相对路径/heading=完整标题路径/snippet=叶子命中文本折叠空白截 120 字）。工具详情不进 LLM 提示词，仅透出前端。
+  - `agent.py`：`Answer.sources_detail`（默认空表，旧字段不变）；`_collect_source_info` 重构 `_collect_sources`（跨步去重语义不变，详情缺失回填最小条目保证下标对齐）；`ask(..., on_stage=None)` 可选回调——执行前发「检索知识库」、合成前发「生成答案」；`_emit_stage` 模块级助手吞回调异常（前端断连不影响生成）。任务路径（finish_task）暂不产出详情（写入端 add_task_result 不带 detail，读出空表回退单行）。
+  - `web_server.py`：`_answer_payload` 顶层新增 `sources_detail` 键（旧对象 getattr 回退空表）；`/api/ask_stream` 传 `on_stage=emit_stage`（首条「规划与检索」覆盖 ask 启动前空窗），meta 事件带 `sources_detail`；`_persist_answer` 落库带详情。
+  - `web_store.py`：messages 表迁移新增 `sources_detail` 列（沿用 sessions.summary 的 ALTER TABLE 模式，旧库打开即补列）；`add_message` 可选参数、`messages()` 读出 JSON。
+  - `webui.html`：证据折叠渲染三级富卡片（标题 12.5px/mono 路径面包屑 path › heading/左边框引句，分隔线，仅既有 tokens）；status 条 st-doc 有详情时显示标题替代原始 `文件#标题` 串；meta/历史加载/ask_image 三路径透传 `sourcesDetail`。
+  - 测试：新增 tests/test_sources_detail_stage.py（工具对齐去重/引句折叠截断/E2E on_stage 顺序与详情组装/缺省 None/回调异常兜底/payload 键与旧对象回退/store 往返与旧库迁移）；`test_task_runner` ACC-T1-03 顶层键集合断言按加法扩展更新（W1 注释注明），metrics 键集合断言不变。
+- **兼容性**：/api 契约只增不改（payload/meta/sessions 消息各加一个键）；ask 签名新参带默认值；旧库自动迁移；无详情来源回退单行渲染。
+- **涉及文件**：src/agents/{tools,agent,web_server,web_store}.py、scripts/webui.html、tests/{test_sources_detail_stage(新),test_task_runner}.py。
+
+---
+
 ## W1 切片记录（2026-09-05，用户驱动前端改版：答案卡对齐设计原型）
 
 - **背景**：用户提供设计原型 demo（桌面 redesign-mockup-final.html，含「重播生成过程」演示），确认改造 webui 答案卡；用户约束——**颜色一律沿用原页面既有 tokens（不引入 demo 黑白配色）**、重播按钮与自动播放仅演示不入生产、三栏布局与其余功能不动。已先在浏览器实跑 demo 学习其时间轴（检索态→生成态→完成态、引用跳转、详情抽屉），并核对其缺陷（检索期 opacity 占位留白、`.evidence-item.no` 选择器失效、生成态残留工具 chip、#fef9c3 高亮无暗色适配）——均未带入实现。

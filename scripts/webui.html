@@ -674,6 +674,20 @@ body{
 .card .retrieval-bar.open{border-color:var(--line-2);}
 .card .retrieval-bar .rb-chunk{transition:background .5s;}
 .card .retrieval-bar .rb-chunk.flash{background:var(--blue-soft);}
+/* 结构化证据卡（W1 sources_detail）：标题/路径/引句 三级 */
+.rb-chunk.rich{align-items:flex-start;padding:7px 0;}
+.rb-chunk.rich + .rb-chunk.rich{border-top:1px solid var(--line-2);margin-top:2px;padding-top:9px;}
+.rb-chunk .rc-main{flex:1;min-width:0;}
+.rb-chunk .rc-title{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.5;}
+.rb-chunk .rc-crumb{
+  font-family:var(--mono);font-size:9px;color:var(--mute);margin-top:3px;letter-spacing:0.03em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.rb-chunk .rc-quote{
+  font-size:11.5px;color:var(--ink-2);line-height:1.65;margin-top:6px;
+  border-left:2px solid var(--blue-line);padding-left:9px;
+  overflow-wrap:anywhere;
+}
 .cite{cursor:pointer;transition:background .3s;}
 .cite:hover{background:var(--blue-soft);}
 .ad-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px;}
@@ -1126,11 +1140,12 @@ function liveAnswerHTML(m){
       `<div class="block lead">${renderMd(m.answer||'',m.streamKey?'stream:'+m.streamKey:undefined)}<span class="stream-cursor" aria-hidden="true"></span></div>`;
   }
   const sources=sourceRows(m.sources),metrics=m.metrics||{},plan=m.plan||{};
+  const details=Array.isArray(m.sourcesDetail)?m.sourcesDetail:[];
   const key=_jsKey(msgKey(m));
   /* L1 完成状态条：模式徽章 · 首个工具 · 首个来源 · 命中/耗时/成本 · 详情 */
   const firstTool=(plan.steps||[]).find(s=>s&&s.action)?.action||'';
   const metricsSeg=(metrics.latency_s!=null||metrics.cost_yuan!=null)?`<span class="st-metrics">命中 ${sources.length} 段 · ${metrics.latency_s??'—'}s · ¥${metrics.cost_yuan??0}</span>`:'';
-  const docSeg=sources.length?`<span class="st-doc" title="${esc(sources[0].name)}">${esc(sources[0].name)}</span>`:'';
+  const docSeg=sources.length?`<span class="st-doc" title="${esc(sources[0].name)}">${esc(details[0]?.title||sources[0].name)}</span>`:'';
   const status=`<div class="ans-status"><span class="kb-badge ${sources.length?'kb':'web'}">${sources.length?'知识库命中':'模型回答'}</span>${metrics.task_id?'<span class="kb-badge task-flag">后台任务</span>':''}${firstTool?`<span class="st-tool">${esc(firstTool)}</span>`:''}${docSeg}${metricsSeg}${m.messageId?`<button class="ans-act detail" onclick="openAnswerDetail('${key}')">详情</button>`:''}</div>`;
   const citeInvalid=Number(metrics.citations_invalid||0),citeValid=Number(metrics.citations_valid||0);
   const citeLine=citeInvalid>0?`<div class="block cite-warn">引用校验：剔除 ${citeInvalid} 个无效引用</div>`:(citeValid>0?`<div class="block cite-ok">引用校验 通过</div>`:'');
@@ -1138,7 +1153,18 @@ function liveAnswerHTML(m){
   const body=`<div class="block lead">${renderMd(m.answer||'',m.messageId?'id:'+m.messageId:(m.streamKey?'stream:'+m.streamKey:undefined))}</div>`;
   const planHtml=(plan.steps||[]).length?`<div class="block note"><b>${esc(plan.summary||'执行轨迹')}</b><br>${plan.steps.map(s=>`${s.ok?'✓':'×'} ${esc(s.action)}`).join(' · ')}</div>`:'';
   /* L2 证据折叠（生成中隐藏，完成后默认收起，可展开；引用 [n] 可跳转高亮） */
-  const evBar=(sources.length&&!m.streaming)?`<div class="block retrieval-bar${EV_FOLD_OPEN[key]?' open':''}" data-evkey="${key}" onclick="toggleEvFold('${key}',this)"><div class="rb-top"><span class="rb-caret">▶</span><span class="rb-l">已检索到 <b>${sources.length}</b> 个相关来源</span></div><div class="rb-list">${sources.map((s,i)=>`<div class="rb-chunk" data-idx="${i+1}"><span class="ck">#${String(i+1).padStart(2,'0')}</span><span>${esc(s.name)}</span></div>`).join('')}</div></div>`:'';
+  /* L2 证据折叠（生成中隐藏，完成后默认收起，可展开；引用 [n] 可跳转高亮）。
+     有 sources_detail 时渲染 标题/路径/引句 三级卡片，否则回退单行来源名 */
+  const evRows=sources.map((s,i)=>{
+    const d=details[i]||{};
+    const idx=String(i+1).padStart(2,'0');
+    if(d.title||d.snippet){
+      const crumb=[d.path,d.heading].filter(Boolean).join(' › ');
+      return `<div class="rb-chunk rich" data-idx="${i+1}"><span class="ck">#${idx}</span><div class="rc-main"><div class="rc-title">${esc(d.title||s.name)}</div>${crumb?`<div class="rc-crumb">${esc(crumb)}</div>`:''}${d.snippet?`<div class="rc-quote">${esc(d.snippet)}</div>`:''}</div></div>`;
+    }
+    return `<div class="rb-chunk" data-idx="${i+1}"><span class="ck">#${idx}</span><span>${esc(s.name)}</span></div>`;
+  }).join('');
+  const evBar=(sources.length&&!m.streaming)?`<div class="block retrieval-bar${EV_FOLD_OPEN[key]?' open':''}" data-evkey="${key}" onclick="toggleEvFold('${key}',this)"><div class="rb-top"><span class="rb-caret">▶</span><span class="rb-l">已检索到 <b>${sources.length}</b> 个相关来源</span></div><div class="rb-list">${evRows}</div></div>`:'';
   /* L3 操作行（生成中隐藏，防止对半成品操作） */
   const actions=(m.messageId&&!m.streaming)?`<div class="ans-actions"><button class="ans-act" onclick="copyAnswer('${key}')">复制</button><button class="ans-act${m.feedback==='up'?' on':''}" onclick="sendFeedback('${key}','up')">有用</button><button class="ans-act down${m.feedback==='down'?' on':''}" onclick="sendFeedback('${key}','down')">没用</button><span class="aa-time">${nowTime()}</span></div>`:'';
   return status+citeLine+webState+body+planHtml+evBar+actions;
@@ -1489,7 +1515,7 @@ async function onSend(){
           if(!line.trim())continue;
           const event=JSON.parse(line);
           if(event.event==='stage'){msg.stageName=event.name||msg.stageName;if(msg.thinking)updateStreamCard(msg);}
-          if(event.event==='meta'){streamed.sources=event.sources||[];streamed.plan=event.plan||{steps:[]};streamed.metrics=event.metrics||{};streamed.message_id=event.message_id||'';Object.assign(msg,{thinking:false,streaming:true,sources:streamed.sources,plan:streamed.plan,metrics:streamed.metrics,messageId:streamed.message_id});updateStreamCard(msg);}
+          if(event.event==='meta'){streamed.sources=event.sources||[];streamed.sourcesDetail=event.sources_detail||[];streamed.plan=event.plan||{steps:[]};streamed.metrics=event.metrics||{};streamed.message_id=event.message_id||'';Object.assign(msg,{thinking:false,streaming:true,sources:streamed.sources,sourcesDetail:streamed.sourcesDetail,plan:streamed.plan,metrics:streamed.metrics,messageId:streamed.message_id});updateStreamCard(msg);}
           if(event.event==='delta'){streamed.answer+=event.text;player.buf=streamed.answer;}
           if(event.event==='done'&&event.error){player.active=false;clearInterval(player.timer);throw new Error(event.error);}
         }
@@ -1498,7 +1524,7 @@ async function onSend(){
       player.finished=true;
       data=streamed;
     }
-    if(pendingImage)msgs.push({role:'agent',answer:data.answer,sources:data.sources,plan:data.plan,metrics:data.metrics,messageId:data.message_id});
+    if(pendingImage)msgs.push({role:'agent',answer:data.answer,sources:data.sources,sourcesDetail:data.sources_detail,plan:data.plan,metrics:data.metrics,messageId:data.message_id});
     renderMessages();
     const sources=sourceRows(data.sources);
     renderSources(sources);
@@ -1525,7 +1551,7 @@ async function openSession(id){
   if(busy) return;
   currentSession = id;
   const target=SESSIONS.find(s=>s.id===id);
-  if(target){const data=await fetch(`/api/sessions/${id}`).then(r=>r.json());target.messages=[INTRO,...(data.messages||[]).map(m=>m.role==='user'?{role:'user',text:m.content}:{role:'agent',answer:m.content,sources:m.sources,plan:m.plan,metrics:m.metrics,messageId:m.id,feedback:m.feedback})];}
+  if(target){const data=await fetch(`/api/sessions/${id}`).then(r=>r.json());target.messages=[INTRO,...(data.messages||[]).map(m=>m.role==='user'?{role:'user',text:m.content}:{role:'agent',answer:m.content,sources:m.sources,sourcesDetail:m.sources_detail,plan:m.plan,metrics:m.metrics,messageId:m.id,feedback:m.feedback})];}
   renderSessionList();
   renderMessages();
   renderStepsIdle();

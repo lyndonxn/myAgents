@@ -49,6 +49,10 @@ class WebStore:
             cols = [r["name"] for r in db.execute("PRAGMA table_info(sessions)")]
             if "summary" not in cols:
                 db.execute("ALTER TABLE sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
+            # 迁移：messages.sources_detail 保存结构化来源详情（W1，JSON 数组，与 sources 下标对应）。
+            cols = [r["name"] for r in db.execute("PRAGMA table_info(messages)")]
+            if "sources_detail" not in cols:
+                db.execute("ALTER TABLE messages ADD COLUMN sources_detail TEXT NOT NULL DEFAULT '[]'")
 
     @staticmethod
     def _now():
@@ -125,16 +129,17 @@ class WebStore:
             out = []
             for row in rows:
                 item = dict(row)
-                for key in ("sources", "plan", "metrics"):
+                for key in ("sources", "plan", "metrics", "sources_detail"):
                     item[key] = json.loads(item[key])
                 out.append(item)
             return out
 
-    def add_message(self, session_id: str, role: str, content: str, sources=None, plan=None, metrics=None):
+    def add_message(self, session_id: str, role: str, content: str, sources=None, plan=None, metrics=None, sources_detail=None):
         now = self._now()
         with self._connect() as db:
-            cur = db.execute("INSERT INTO messages(session_id,role,content,sources,plan,metrics,created_at) VALUES (?,?,?,?,?,?,?)",
+            cur = db.execute("INSERT INTO messages(session_id,role,content,sources,sources_detail,plan,metrics,created_at) VALUES (?,?,?,?,?,?,?,?)",
                 (session_id, role, content, json.dumps(sources or [], ensure_ascii=False),
+                 json.dumps(sources_detail or [], ensure_ascii=False),
                  json.dumps(plan or {}, ensure_ascii=False), json.dumps(metrics or {}, ensure_ascii=False), now))
             title = content.strip().replace("\n", " ")[:24] if role == "user" else ""
             if title:

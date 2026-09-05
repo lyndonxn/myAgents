@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 from . import audit as audit_mod
 from .bm25 import BM25Index
@@ -136,6 +137,16 @@ def compress_evidence(text: str, query: str, target_ratio: float = 0.7, min_char
     return "".join(kept)
 
 
+def _emit_stage(on_stage: "Callable[[str], None] | None", name: str) -> None:
+    """转发阶段事件给流式端点（W1）；回调异常只降级记日志，绝不中断问答本身。"""
+    if on_stage is None:
+        return
+    try:
+        on_stage(name)
+    except Exception as exc:  # noqa: BLE001 - 前端断连等不应影响回答生成
+        LOG.debug("on_stage 回调失败（已忽略）: %s", exc)
+
+
 @dataclass
 class Answer:
     question: str = ""
@@ -143,6 +154,9 @@ class Answer:
     steps: list[StepResult] = field(default_factory=list)
     final_answer: str = ""
     sources: list[str] = field(default_factory=list)
+    # W1：与 sources 一一对应的结构化来源详情（title/path/heading/snippet，前端证据卡用）；
+    # 旧 sources 字段与语义不变，缺失详情的工具步骤回退为最小条目，保证下标对齐。
+    sources_detail: list[dict] = field(default_factory=list)
     citations_valid: int = 0      # 正文合法 [n] 引用数（S3 引用校验）
     citations_invalid: int = 0    # 已剔除的非法 [n] 引用数
     total_latency_s: float = 0.0
@@ -427,6 +441,7 @@ class Agent:
         session_id: str = "",
         remember: bool | None = None,
         allow_web: bool | None = None,
+        on_stage: "Callable[[str], None] | None" = None,
     ) -> Answer:
         if not self._index_loaded:
             self.load_index()
@@ -488,6 +503,8 @@ class Agent:
                 self._log_plan(answer.plan, history=history_text)
 
             # 2. 执行（降级许可随本次 allow_web 传入，配置为 true 的强禁同样生效）
+            # W1：真阶段事件——检索开始（流式端点经 on_stage 转发前端状态条）
+            _emit_stage(on_stage, "检索知识库")
             executor = Executor(self.config, run_tools, self._ctx, web_fallback=effective_allow_web)
             answer.steps = executor.execute(answer.plan)
             if verbose:
@@ -502,6 +519,8 @@ class Agent:
                 )
 
             # 3. 生成（结合对话历史，保持连贯；全部步骤结束后统一合成一次）
+            # W1：真阶段事件——检索/反思结束，进入合成
+            _emit_stage(on_stage, "生成答案")
             # 知识库零命中且未联网（用户未同意）→ 追加确定性提示：答「未在知识库内」并询问是否联网
             kb_miss = self._kb_miss(answer.steps, web_allowed=effective_allow_web)
             miss_hint = (
@@ -512,7 +531,13 @@ class Agent:
             )
             answer.final_answer = self._synthesize(question, answer.plan, answer.steps, history_text, extra_hint=miss_hint)
             answer.llm_calls += 1
-            answer.sources = self._collect_sources(answer.steps)
+            info = self._collect_source_info(answer.steps)
+            answer.sources = [src for src, _ in info]
+            # W1：详情缺失的工具步骤回填最小条目，保证与 sources 下标一一对应
+            answer.sources_detail = [
+                detail or {"title": src, "path": src, "heading": "", "snippet": ""}
+                for src, detail in info
+            ]
             # 3.5 引用校验（S3）：sources 在 ask 层收集，故在此按实际来源数校验
             # 正文 [n] 标记，剔除幻觉引用后回填计数。
             report = validate_citations(answer.final_answer, len(answer.sources))
@@ -842,14 +867,27 @@ class Agent:
         return not kb_hit and not web_used
 
     def _collect_sources(self, steps: list[StepResult]) -> list[str]:
-        seen: list[str] = []
+        return [src for src, _ in self._collect_source_info(steps)]
+
+    def _collect_source_info(self, steps: list[StepResult]) -> list[tuple[str, dict | None]]:
+        """收集（来源串, 结构化详情|None）列表，保持 _collect_sources 的跨步去重顺序语义。
+
+        工具输出中 sources 与 sources_detail 下标一一对应；无详情的工具（web_search、
+        旧假工具）详情为 None，由调用方回填最小条目以维持下标对齐。
+        """
+        seen: set[str] = set()
+        out: list[tuple[str, dict | None]] = []
         for step in steps:
-            out = step.output
-            if isinstance(out, dict):
-                for src in out.get("sources") or []:
-                    if src not in seen:
-                        seen.append(src)
-        return seen
+            out_result = step.output
+            if isinstance(out_result, dict):
+                details = out_result.get("sources_detail") or []
+                for i, src in enumerate(out_result.get("sources") or []):
+                    if src in seen:
+                        continue
+                    seen.add(src)
+                    detail = details[i] if i < len(details) and isinstance(details[i], dict) else None
+                    out.append((src, detail))
+        return out
 
     def _accumulate_usage(self, result) -> None:
         self.prompt_tokens += result.prompt_tokens

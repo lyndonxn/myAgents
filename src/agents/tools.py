@@ -156,20 +156,40 @@ def _fmt_hit(rank: int, hit) -> str:
     return f"[{rank}] {title} 分数 {hit.final_score:.3f}\n{leaf_line}内容：{head}"
 
 
+def _hit_detail(hit) -> dict:
+    """单条命中的结构化来源详情（前端证据卡展示用；不进 LLM 提示词）。
+
+    title 取标题路径末段（无标题用文件名），path 为库内相对文件路径，
+    snippet 优先取叶子命中点文本（折叠空白、截断 120 字）。
+    """
+    chunk = hit.chunk
+    heading = (chunk.heading or "").strip()
+    snippet = " ".join(((hit.leaf_text or chunk.text or "").strip()).split())[:120]
+    title = heading.split(">")[-1].strip() if heading else (chunk.file or "知识库片段")
+    return {
+        "title": title,
+        "path": chunk.file or (hit.source or ""),
+        "heading": heading,
+        "snippet": snippet,
+    }
+
+
 def tool_search_knowledge_base(ctx: ToolContext, query: str = "", top_k: int = 5) -> dict:
-    """从知识库检索与 query 最相关的片段，返回正文与来源列表。"""
+    """从知识库检索与 query 最相关的片段，返回正文、来源列表与结构化来源详情。"""
     if not ctx.retriever:
         raise RuntimeError("检索器未初始化")
     top_k = max(1, min(int(top_k or 5), 10))
     hits = ctx.retriever.retrieve(query, top_k=top_k)
     lines = [f"针对「{query}」检索到 {len(hits)} 条相关片段："]
     sources: list[str] = []
+    sources_detail: list[dict] = []  # 与 sources 一一对应（W1：前端证据卡）
     for rank, hit in enumerate(hits, start=1):
         lines.append(_fmt_hit(rank, hit))
         src = hit.source or hit.file
         if src not in sources:
             sources.append(src)
-    return {"text": "\n".join(lines), "sources": sources, "hit_count": len(hits)}
+            sources_detail.append(_hit_detail(hit))
+    return {"text": "\n".join(lines), "sources": sources, "hit_count": len(hits), "sources_detail": sources_detail}
 
 
 def tool_web_search(ctx: ToolContext, query: str = "", max_results: int = 5) -> dict:
