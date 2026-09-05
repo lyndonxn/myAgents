@@ -8,20 +8,44 @@ import {
   api,
   askImage,
   askStream,
+  loadTaskDetail,
+  loadTasks,
   ModelNotConfiguredError,
+  postTaskAction,
+  TASK_TERMINAL,
   type MetricsInfo,
   type PlanInfo,
   type SessionInfo,
   type SourceDetail,
+  type TaskDetail,
+  type TaskInfo,
 } from "@/lib/api";
 import TopBar, { type IndexState } from "@/components/TopBar";
 import Rail, { type KbSummary } from "@/components/Rail";
 import Chat, { type AgentStreamMsg, type ChatHandlers, type MsgVM } from "@/components/Chat";
 import Composer, { type PendingImage } from "@/components/Composer";
-import TracePanel from "@/components/TracePanel";
+import TracePanel, { type SourceVM, type TraceStepVM, type VitalsVM } from "@/components/TracePanel";
 import AnswerDetailModal from "@/components/AnswerDetailModal";
 
 const INTRO: MsgVM = { kind: "intro" };
+
+/* 检索轨迹脚本（装饰性演示数据，与 legacy FLOW_RAG 一致） */
+const IDLE_STEPS: TraceStepVM[] = [
+  { name: "查询改写", en: "Query Rewrite", state: "idle" },
+  { name: "向量检索", en: "Vector Search", state: "idle" },
+  { name: "交叉重排", en: "Rerank · Top-5", state: "idle" },
+  { name: "组装上下文", en: "Assemble Context", state: "idle" },
+  { name: "生成回答", en: "Generate", state: "idle" },
+  { name: "引用校验", en: "Citation Check", state: "idle" },
+];
+const TRACE_FLOW: { name: string; en: string; detail: string; time: string }[] = [
+  { name: "查询改写", en: "Query Rewrite", detail: "原始问题 → 检索式 ×2", time: "0.08s" },
+  { name: "向量检索", en: "Vector Search", detail: "召回 24 块 / 全库 295 块", time: "0.21s" },
+  { name: "交叉重排", en: "Rerank · Top-5", detail: "cross-encoder 精排 24 → 5", time: "0.34s" },
+  { name: "组装上下文", en: "Assemble Context", detail: "5 块 · 约 2.1k tokens", time: "0.05s" },
+  { name: "生成回答", en: "Generate", detail: "流式输出", time: "1.20s" },
+  { name: "引用校验", en: "Citation Check", detail: "全部命中", time: "0.06s" },
+];
 
 export default function Home() {
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
@@ -57,6 +81,14 @@ export default function Home() {
   const streamFailedFlag = useRef(false);
   const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+  /* ----- W6-S6 面板状态 ----- */
+  const [traceSteps, setTraceSteps] = useState<TraceStepVM[]>(IDLE_STEPS);
+  const [sources, setSources] = useState<SourceVM[]>([]);
+  const [vitals, setVitals] = useState<VitalsVM>({ recall: "—", time: "—", tok: "—", web: "待命" });
+  const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const [expandedTask, setExpandedTask] = useState<string | null>(null);
+  const [taskDetails, setTaskDetails] = useState<Record<string, TaskDetail | false | undefined>>({});
+  const taskDetailCache = useRef<Record<string, TaskDetail | false>>({});
 
   const onPickImage = useCallback(
     (file: File) => {
@@ -100,6 +132,9 @@ export default function Home() {
   const openSession = useCallback(
     async (id: string, known?: SessionInfo[]) => {
       setCurrentSession(id);
+      setSources([]);
+      setVitals({ recall: "—", time: "—", tok: "—", web: "待命" });
+      setTraceSteps(IDLE_STEPS);
       try {
         const list = known ?? sessions;
         if (!list.some((s) => s.id === id)) {
@@ -227,6 +262,21 @@ export default function Home() {
     [busy, activeWorkspace, loadSessionsInto, showToast],
   );
 
+  /* ----- W6-S6：检索轨迹动画（装饰性，与 legacy runTrace 一致）----- */
+  const runTrace = useCallback(() => {
+    setTraceSteps(TRACE_FLOW.map((s) => ({ ...s, state: "idle" as const })));
+    let i = 0;
+    const next = () => {
+      if (i > 0) setTraceSteps((prev) => prev.map((s, idx) => (idx === i - 1 ? { ...s, state: "done" as const } : s)));
+      if (i >= TRACE_FLOW.length) return;
+      const cur = i;
+      setTraceSteps((prev) => prev.map((s, idx) => (idx === cur ? { ...s, state: "running" as const } : s)));
+      i += 1;
+      setTimeout(next, 380 + Math.random() * 260);
+    };
+    next();
+  }, []);
+
   /* ----- 流式问答（队列式播放器：delta 进缓冲、打字机节奏渲染，done 后收 followups）----- */
   const onSend = useCallback(
     async (textArg?: string) => {
@@ -244,6 +294,7 @@ export default function Home() {
       setPendingImage(null);
       setInputValue("");
       setBusy(true);
+      runTrace();
       const key = `s${++seqRef.current}`;
       const msg: AgentStreamMsg = {
         kind: "stream",
@@ -270,6 +321,19 @@ export default function Home() {
           msg.metrics = data.metrics;
           msg.messageId = data.message_id != null ? String(data.message_id) : undefined;
           setTick((t) => t + 1);
+          /* 右侧面板：命中来源 + 运行指标 */
+          const rows = (data.sources || []).map((s, i) => ({
+            name: String(s),
+            ref: `来源 ${String(i + 1).padStart(2, "0")}`,
+            pct: Math.max(68, 92 - i * 7),
+          }));
+          setSources(rows);
+          setVitals({
+            recall: `${rows.length} 个来源`,
+            time: `${data.metrics?.latency_s ?? "—"}s`,
+            tok: data.metrics?.completion_tokens ? `${data.metrics.completion_tokens} tokens` : "—",
+            web: data.plan?.fallback ? "已触发" : "待命",
+          });
         } catch (e) {
           msg.phase = "done";
           msg.shown = `请求失败：${(e as Error).message}`;
@@ -351,6 +415,19 @@ export default function Home() {
           },
         );
         player.finished = true;
+        /* 右侧面板：命中来源 + 运行指标（W6-S6） */
+        const rows = streamed.sources.map((s, i) => ({
+          name: String(s),
+          ref: `来源 ${String(i + 1).padStart(2, "0")}`,
+          pct: Math.max(68, 92 - i * 7),
+        }));
+        setSources(rows);
+        setVitals({
+          recall: `${rows.length} 个来源`,
+          time: `${streamed.metrics?.latency_s ?? "—"}s`,
+          tok: streamed.metrics?.completion_tokens ? `${streamed.metrics.completion_tokens} tokens` : "—",
+          web: streamed.plan?.fallback ? "已触发" : "待命",
+        });
       } catch (e) {
         const aborted = e instanceof DOMException && e.name === "AbortError";
         streamFailed = !aborted;
@@ -538,6 +615,60 @@ export default function Home() {
     return () => document.removeEventListener("keydown", handler);
   }, [busy, createSession]);
 
+  /* ----- W6-S6：后台任务轮询（活跃 2s / 空闲 8s，页面隐藏降频）----- */
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const list = await loadTasks();
+        if (!stopped) setTasks(list);
+      } catch (_e) {
+        /* 后端未连接保留现有列表 */
+      }
+      if (stopped) return;
+      const active = tasks.some((t) => !TASK_TERMINAL.has(t.status));
+      timer = setTimeout(tick, document.hidden ? 8000 : active ? 2000 : 8000);
+    };
+    tick();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [tasks]);
+
+  const onToggleTask = useCallback(
+    async (taskId: string) => {
+      const next = expandedTask === taskId ? null : taskId;
+      setExpandedTask(next);
+      if (!next) return;
+      try {
+        const d = await loadTaskDetail(taskId);
+        taskDetailCache.current[taskId] = d;
+        setTaskDetails((prev) => ({ ...prev, [taskId]: d }));
+      } catch (_e) {
+        setTaskDetails((prev) => ({ ...prev, [taskId]: false }));
+      }
+    },
+    [expandedTask],
+  );
+
+  const onTaskAction = useCallback(
+    async (taskId: string, action: string) => {
+      try {
+        await postTaskAction(taskId, action);
+        showToast(action === "pause" ? "任务已暂停" : action === "resume" ? "任务已继续" : "任务已取消");
+        delete taskDetailCache.current[taskId];
+        setTaskDetails((prev) => ({ ...prev, [taskId]: undefined }));
+        setTasks(await loadTasks());
+      } catch (e) {
+        showToast((e as Error).message || "操作失败", true);
+      }
+    },
+    [showToast],
+  );
+
   const onToggleTheme = () => {
     const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
@@ -583,7 +714,16 @@ export default function Home() {
           onClearImage={onClearImage}
         />
       </main>
-      <TracePanel />
+      <TracePanel
+        steps={traceSteps}
+        sources={sources}
+        vitals={vitals}
+        tasks={tasks}
+        expandedTask={expandedTask}
+        taskDetails={taskDetails}
+        onToggleTask={(id) => void onToggleTask(id)}
+        onTaskAction={(id, action) => void onTaskAction(id, action)}
+      />
       <AnswerDetailModal msg={detailMsg} onClose={() => setDetailMsg(null)} />
       <div className={`toast${toast ? " show" : ""}`} style={toast?.error ? { background: "var(--red)" } : undefined}>
         {toast?.msg}

@@ -146,6 +146,39 @@ export async function askImage(payload: {
   return data;
 }
 
+/* ----- 后台任务（T2 面板）----- */
+
+export interface TaskInfo {
+  task_id: string;
+  status: string;
+  question: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TaskDetail {
+  steps?: { action?: string; ok?: boolean; error?: string }[];
+  final_answer?: string;
+  error?: string;
+}
+
+export const TASK_TERMINAL = new Set(["completed", "failed", "canceled"]);
+
+export async function loadTasks(): Promise<TaskInfo[]> {
+  const data = await jget<{ tasks?: TaskInfo[] }>("/api/tasks");
+  return data.tasks || [];
+}
+
+export async function loadTaskDetail(taskId: string): Promise<TaskDetail> {
+  const data = await jget<TaskDetail & { error?: string }>(`/api/tasks/${encodeURIComponent(taskId)}`);
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+export async function postTaskAction(taskId: string, action: string): Promise<void> {
+  await jpost(`/api/tasks/${encodeURIComponent(taskId)}/${action}`);
+}
+
 /* ----- 流式问答（NDJSON：stage → meta → delta → done → followups?）----- */
 
 export class ModelNotConfiguredError extends Error {
