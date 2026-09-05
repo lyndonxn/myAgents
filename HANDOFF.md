@@ -116,6 +116,8 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ## W6 切片记录（2026-09-05，前端 Next.js 改写启动；S1 脚手架+管线完成）
 
+- **S3 完成（同日）**：流式聊天。`lib/api.ts` 新增 `askStream`（NDJSON 读取器：stage/meta/delta/done/followups 事件 + MODEL_NOT_CONFIGURED 错误类）；`Chat.tsx` MsgVM 扩展 `agent-stream` 三相（thinking spinner → streaming 静默行+打字机光标 → done），滚动跟随（用户上滚停止跟随，W3 对齐）；`Composer.tsx` 转受控（Enter 发送、132px 限高自适应、↑/■ 两态）；`page.tsx` 队列式播放器（30ms/4 字符）+ 中断/错误路径（abort 卡/请求失败卡、真失败不刷新列表、成功后仅刷新会话列表标题不换消息——Next 版消息存 React state，无 legacy 交换问题）+ busy 守卫（生成中禁切会话/删除/重置/切工作区）。**验证**：typecheck 0 错、build 通过、197 测试全绿；8788 桩流冒烟：三相截图正确、stop→「思考已停止」卡（桩需接 abort 信号——真实 fetch 自动拒绝 pending read）、记忆计数 +1。已知边界：历史/完成卡暂为纯文本（`**` 记号原样），markdown 渲染与答案卡在 S4；followups 数据已入 state、UI 在 S4。
+
 - **S2 完成（同日）**：会话/工作区状态层。新增 `lib/api.ts`（fetch 封装，与 legacy 1:1）与 `components/{TopBar,Rail,Chat,Composer,TracePanel}.tsx`；`page.tsx` 客户端根：workspaces→sessions→首个会话初始化、会话切换/删除（confirm）/重置/新建（含 ⌘K）、工作区切换（失败回退）、状态轮询 5s（索引灯/记忆轮数/知识库概览四格/上下文竖轨百分比）+ 心跳 3s、toast、主题切换（localStorage 持久化）。消息区为 S2 简化渲染（INTRO+纯文本卡），S4 换完整答案卡；composer 发送/上传/语音为禁用壳（S5 接入）；设置/知识库管理入口暂 toast 提示（S7）。**验证**：typecheck 0 错；`next build` 导出成功；8788 真实后端端到端——13 个真实会话加载、激活「agent定义」消息渲染、状态灯 已连接·已同步、docCount 142/chunkCount 636/命中率 88.9%、会话切换（什么是skill 5问+6卡）全通；截图核对。
 
 - **决策（用户拍板）**：前端从单文件 HTML 迁移到 **Next.js（App Router）静态导出**，由现有 Python 服务器伺服（本地优先单进程不变，API 同源零跨域，后端零协议改动）。**备份**：`scripts/webui.legacy.html`（逐字节副本）+ git 标签 `webui-html-final`（cebe790）。工具链：Node v24.19.0 / npm 11.17.0。

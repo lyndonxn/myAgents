@@ -118,3 +118,47 @@ export const api = {
   feedback: (messageId: number, value: Exclude<FeedbackValue, "">) =>
     jpost("/api/feedback", { message_id: messageId, value }),
 };
+
+/* ----- 流式问答（NDJSON：stage → meta → delta → done → followups?）----- */
+
+export class ModelNotConfiguredError extends Error {
+  constructor() {
+    super("请先在设置中配置模型 API Key");
+    this.name = "ModelNotConfiguredError";
+  }
+}
+
+export async function askStream(
+  payload: { question: string; session_id?: string },
+  handlers: { onEvent: (ev: Record<string, unknown>) => void; signal: AbortSignal },
+): Promise<void> {
+  const res = await fetch("/api/ask_stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: handlers.signal,
+  });
+  if (!res.ok) {
+    let failure: { error?: string; code?: string } = {};
+    try {
+      failure = await res.json();
+    } catch (_e) {
+      /* 非 JSON 错误体 */
+    }
+    if (failure.code === "MODEL_NOT_CONFIGURED") throw new ModelNotConfiguredError();
+    throw new Error(failure.error || `请求失败（${res.status}）`);
+  }
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop()!;
+    for (const line of lines) {
+      if (line.trim()) handlers.onEvent(JSON.parse(line) as Record<string, unknown>);
+    }
+    if (done) break;
+  }
+}

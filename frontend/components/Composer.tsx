@@ -1,20 +1,34 @@
 "use client";
 
-/* 输入区（S2 静态壳：发送/上传/语音行为在 S5 接入；结构 = W5 验收版） */
+/* 输入区：受控 textarea（Enter 发送/限高自适应）+ ＋上传（S5）/ 语音（S5）/ 圆形发送键（↑/■）。
+ * 左侧上下文竖轨按 ctxPct 着色（绿→红）。 */
 
-export default function Composer(props: { ctxPct: number }) {
+import { useRef } from "react";
+
+export default function Composer(props: {
+  ctxPct: number;
+  value: string;
+  busy: boolean;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  onStop: () => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const segs = 24;
   const active = Math.round(segs * props.ctxPct);
   const hue = Math.round(142 * (1 - props.ctxPct));
   const color = `hsl(${hue} 68% 42%)`;
+
+  const autoGrow = () => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 132)}px`;
+  };
+
   return (
     <div className="composer">
       <div className="composer-inner">
-        <div className="ctx-rail" id="ctxLine" title="上下文容量">
-          {Array.from({ length: segs }, (_, i) => (
-            <span key={i} className="seg" style={{ background: i < active ? color : "var(--line)" }} />
-          ))}
-        </div>
         <div className="img-preview" id="imgPreview" hidden>
           <img id="imgThumb" alt="待搜索图片" />
           <button className="img-clear" type="button" title="移除图片" aria-label="移除图片">
@@ -22,7 +36,24 @@ export default function Composer(props: { ctxPct: number }) {
           </button>
         </div>
         <div className="inputrow">
-          <textarea id="input" rows={1} placeholder="输入问题，Enter 发送，Shift+Enter 换行" disabled />
+          <textarea
+            id="input"
+            ref={taRef}
+            rows={1}
+            placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+            value={props.value}
+            onChange={(e) => {
+              props.onChange(e.target.value);
+              autoGrow();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (props.busy) props.onStop();
+                else props.onSubmit();
+              }
+            }}
+          />
           <div className="input-actions">
             <button className="iconbtn addbtn" id="imgBtn" title="上传图片（S5 接入）" aria-label="上传图片" type="button" disabled>
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -38,7 +69,26 @@ export default function Composer(props: { ctxPct: number }) {
               </svg>
             </button>
             <input type="file" id="imgFile" accept="image/*" hidden />
-            <button className="sendbtn" id="sendBtn" aria-label="发送消息（S3 接入）" type="button" disabled title="S3 接入" />
+            <button
+              className={`sendbtn${props.busy ? " stop" : ""}`}
+              id="sendBtn"
+              aria-label={props.busy ? "停止生成" : "发送消息"}
+              title={props.busy ? "停止生成" : "发送消息"}
+              type="button"
+              disabled={!props.busy && !props.value.trim()}
+              onClick={() => (props.busy ? props.onStop() : props.onSubmit())}
+            >
+              {props.busy ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true" style={{ fill: "currentColor", stroke: "none" }}>
+                  <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <line x1="12" y1="19" x2="12" y2="5" />
+                  <polyline points="5 12 12 5 19 12" />
+                </svg>
+              )}
+            </button>
           </div>
         </div>
         <div className="composer-note">
