@@ -33,3 +33,9 @@ data/desktop-launcher.log
 
 # ZCode local tool artifacts
 .zcode/
+
+# Next.js frontend (W6)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts

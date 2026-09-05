@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import mimetypes
 import re
 import threading
 import time
@@ -42,6 +43,8 @@ from agents.task_store import TaskStore
 from agents.web_store import WebStore
 
 PAGE = PROJECT_ROOT / "scripts" / "webui.html"
+# W6：Next.js 静态导出目录（frontend/out）。存在则优先伺服；缺失回退 legacy 单文件页
+EXPORT_DIR = PROJECT_ROOT / "frontend" / "out"
 VENDOR_DIR = PROJECT_ROOT / "scripts" / "vendor"
 LOG = get_logger("web")
 
@@ -468,8 +471,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/logs"):
             self._send_json(self._logs_view())
             return
-        # 聊天页面
-        if PAGE.exists():
+        # 聊天页面：优先 Next 静态导出（W6，frontend/out），缺失回退 legacy 单文件页
+        static_asset = self._static_export(self.path)
+        if static_asset is not None:
+            body, mime = static_asset
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path in ("/", "/index.html") and PAGE.exists():
             body = PAGE.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -479,6 +492,31 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         self._send_json({"error": "webui.html 缺失"}, 500)
+
+    def _static_export(self, path: str):
+        """W6：伺服 Next 静态导出（frontend/out）。
+
+        返回 (body, content_type) 或 None（导出目录缺失/文件不存在/路径穿越）。
+        路径解析后强制约束在导出目录内，拒绝 `..` 等穿越；文本类型补 charset。
+        """
+        export_dir = EXPORT_DIR
+        if not export_dir.is_dir():
+            return None
+        clean = path.split("?", 1)[0]
+        rel = "index.html" if clean in ("/", "/index.html") else clean.lstrip("/")
+        if not rel:
+            return None
+        candidate = (export_dir / rel).resolve()
+        try:
+            candidate.relative_to(export_dir.resolve())
+        except ValueError:
+            return None
+        if not candidate.is_file():
+            return None
+        mime = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+        if mime.startswith("text/") or mime in ("application/javascript", "application/json"):
+            mime = f"{mime}; charset=utf-8"
+        return candidate.read_bytes(), mime
 
     def _logs_view(self) -> dict:
         """读取日志文件尾部（默认最近 300 行），供设置面板展示。"""

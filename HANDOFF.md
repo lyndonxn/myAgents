@@ -114,6 +114,17 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W6 切片记录（2026-09-05，前端 Next.js 改写启动；S1 脚手架+管线完成）
+
+- **决策（用户拍板）**：前端从单文件 HTML 迁移到 **Next.js（App Router）静态导出**，由现有 Python 服务器伺服（本地优先单进程不变，API 同源零跨域，后端零协议改动）。**备份**：`scripts/webui.legacy.html`（逐字节副本）+ git 标签 `webui-html-final`（cebe790）。工具链：Node v24.19.0 / npm 11.17.0。
+- **目录与管线**：新增 `frontend/`（Next 15 + React 19 + TS loose）；`npm run dev` = 3000 端口 + `/api` 代理到 8787（NEXT_DEV_PROXY=1，浏览器视角同源，后端零 CORS 改动）；`npm run build` = `output:'export'` 产出 `frontend/out/`；`frontend/{node_modules,.next,out,next-env.d.ts}` 已 gitignore，out/ 本地构建后长期有效。
+- **服务器（S1）**：`web_server.py` 新增 `EXPORT_DIR` 与 `Handler._static_export()`——`/`→out/index.html、`/_next/*` 等静态资源按 MIME 伺服（resolve + relative_to 防穿越，文本补 charset）；out/ 缺失自动回退 legacy `scripts/webui.html`（双击启动在未构建环境仍可用）。
+- **S1 验证证据**：新 test_frontend_export 6 用例（根路径映射/嵌套资源 MIME/穿越拒绝/未知文件回 None/缺目录回退），全量 **197/197 OK**；`npm run build` 导出成功（首载 JS 103kB）；8788 实起 Python：`/` 200 text/html、`/_next/static/chunks/*.js` 200 text/javascript；浏览器截图三栏 chrome 与 legacy 视觉一致（设计 tokens 全量平移至 `frontend/app/globals.css`）。
+- **S1 已知边界**：Next 壳为静态 chrome（欢迎页/空会话/idle trace），全部交互仍在 legacy 页——后续切片 S2 会话/工作区 → S3 流式聊天 → S4 答案卡 → S5 composer → S6 任务/trace 面板 → S7 设置弹窗 → S8 收尾（迁移 webui 静态断言测试到前端源码、决定 legacy 文件去留）。**切换完成前 8787 行为不变**（未装 out 的环境自动 legacy）。
+- **涉及文件**：新增 frontend/{package.json,next.config.mjs,tsconfig.json,app/layout.tsx,app/page.tsx,app/globals.css}、tests/test_frontend_export.py；修改 src/agents/web_server.py、.gitignore、scripts/webui.legacy.html（备份副本）。
+
+---
+
 ## W5 切片记录（2026-09-05，composer 上下结构 + 左侧上下文竖轨 + 圆形图标发送键）
 
 - **追加（同日用户反馈）**：生成阶段不再用 spinner/扫描动画——`liveAnswerHTML` streaming 分支改 `.gen-status` 静默状态行（11.5px 小字「正在生成答案 · 引用 N 段内容」+ 1px 细线，无任何动画）；检索阶段（无正文时）保留 `.retrieving` spinner。冒烟：检索态有 spinner、生成态 noSpinner=true + 光标在。
