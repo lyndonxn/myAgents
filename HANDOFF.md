@@ -47,7 +47,7 @@ py_compile 全仓 ✓；八个测试套件（smoke/web_store/tool_hardening/reac
 
 ---
 
-# 2026-09 升级（进行中）
+# 2026-09 升级（已完成，G1–G11 全部交付）
 
 分支：`feature/upgrade-2026-09`（起点 main @ 9e6791f）。规格：`spec/upgrade-2026-09.md`（11 目标 / 4 批，G1–G11）。控制器 = 根会话；分支会话用子代理承载，均已完成并整合。
 
@@ -76,7 +76,7 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ## 收官总览（2026-09-04）
 
-**2026-09 升级收官：G1–G10 全部完成并提交，G11 经用户决策延期挂账。** 分支 `feature/upgrade-2026-09`（13 个提交，起点 main @ 9e6791f），**未 push、未合入 main（均需用户授权）**。
+**2026-09 升级收官：G1–G11 全部完成并提交（G11 原延期项经用户 2026-09-05「继续直至全部结束」指令恢复实施）。** 分支 `feature/upgrade-2026-09`（起点 main @ 9e6791f），**未 push、未合入 main（均需用户授权）**。
 
 | 切片 | 内容 | 提交 |
 | --- | --- | --- |
@@ -90,15 +90,15 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 | G8 | 难评测集（100 题×10 类）+ reward 模块 | 19ded63 |
 | G9 | 速度成本包（快路径/max_tokens/重排/证据压缩） | c2cb0a1 |
 | G10 | 检索迭代循环（改写再检索 + max_search_calls 预算） | ffc7169 |
+| G11 | 本地 LLM 离线档位（空 Key 本地端点 / 非 DeepSeek JSON 约束 / allow_web 单点钳制 / prepare_offline 体检） | 882ce00 |
 
-最终验证：`unittest discover` **156/156 OK**；直跑 18/18 退出码 0；compileall 通过；全程离线。
+最终验证：`unittest discover` **173/173 OK**；直跑 20/20 退出码 0；compileall（src+tests+benchmark+scripts）通过；全程离线。
 
 ### 延期挂账（均为显式决策，无隐藏风险）
-1. **G11 本地 LLM 离线档位**（用户决策暂不做）：LLMClient 本地端点空 Key、非 DeepSeek 模型 JSON 约束、离线档位、一键准备脚本（ACC-U11-01..03 未开始）。
-2. **ACC-U9-03 / ACC-U10-03**：付费 100 题实跑对比（延迟/token/reward 前后对比），需用户单独授权后运行 `benchmark/run_benchmark.py --questions benchmark/questions_hard.json`。
-3. **P1-2 剩余项**：锁拆分（会话记忆/执行/写回三把锁）与可配置多 worker（单 worker 串行已保证正确性）。
-4. **G1 覆盖率指标 ≥80%**：需 coverage.py，超出轻依赖授权。
-5. **P1-5 统一错误码契约**、P1-4 证据级引用校验、P1-1 模块解耦：P1 挂账后置。
+1. **ACC-U9-03 / ACC-U10-03**：付费 100 题实跑对比（延迟/token/reward 前后对比），需用户单独授权后运行 `benchmark/run_benchmark.py --questions benchmark/questions_hard.json`。
+2. **P1-2 剩余项**：锁拆分（会话记忆/执行/写回三把锁）与可配置多 worker（单 worker 串行已保证正确性）。
+3. **G1 覆盖率指标 ≥80%**：需 coverage.py，超出轻依赖授权。
+4. **P1-5 统一错误码契约**、P1-4 证据级引用校验、P1-1 模块解耦：P1 挂账后置。
 
 ### 收尾状态
 - README 已同步（核心能力/当前边界/升级章节）。
@@ -107,9 +107,24 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 - G3 默认行为变更：联网降级/长期记忆/实体记忆默认关闭——存量 runtime.json 未显式设置时启动会提示一次。
 
 ### 如需重启工作
-1. G11 实现路径已明确（见 spec/upgrade-2026-09.md ACC-U11-01..03）。
-2. 合入：`feature/upgrade-2026-09` → main（需用户授权 push）。
-3. 付费对比评测：授权后先跑改造前基线（main 分支）再跑本分支，对比 p50/p95、token 与 reward。
+1. 合入：`feature/upgrade-2026-09` → main（需用户授权 push）。
+2. 付费对比评测：授权后先跑改造前基线（main 分支）再跑本分支，对比 p50/p95、token 与 reward。
+3. 离线档位启用：设置面板把 llm.mode 改为 local（或 config.yaml），base_url 指向本地 OpenAI 兼容端点（如 Ollama http://localhost:11434/v1），运行 `scripts/prepare_offline.py --check` 体检。
+
+---
+
+## G11 切片记录（2026-09-05，控制器续接；实现子代理被取消后遗留的完整工作区改动经控制器核验 + 独立验收子代理确认）
+
+- **验证证据**：`unittest discover` 173/173 OK（G10 后 156 → 新增 test_offline_profile 17 用例）；直跑 20/20 退出码 0；compileall（src+tests+benchmark+scripts）通过；全程离线（ScriptedLLM + TF-IDF 后端 + tempfile，用户 data/runtime.json 与 .env mtime 前后不变）。
+- **实现**：
+  - `llm.mode: cloud | local`（默认 cloud 零行为变化）：枚举校验规则 + CONFIG_FIELDS 白名单 + 设置页「运行模式」下拉与离线说明；
+  - ACC-U11-01：LLMClient local 档允许空 API Key（请求头省略 Authorization），cloud 档保持原报错；local 有 Key 照常带头；
+  - 非 DeepSeek 模型 JSON 约束：chat_json 向 messages 副本末尾追加 `_JSON_ONLY_SYSTEM_HINT`（调用方列表不被修改），修复轮机制不变，deepseek 仍走 response_format；
+  - ACC-U11-02：`resolve_allow_web` 单点钳制——local 档 allow_web 一律 False（ask / plan_only / task_runner 三路径共用该单点），钳制提示一次/进程；KB 未命中走既有披露路径、零网络调用；
+  - ACC-U11-03：离线 E2E（ScriptedLLM + TF-IDF + 临时 KB）全链路绿、引用/来源正常、零 requests 调用；
+  - `scripts/prepare_offline.py`：--check 只读体检（llm.mode/base_url/web 开关/embedding+reranker 缓存可离线加载）给中文修复建议；--prepare 仅打印指引，不做真实下载。
+- **独立验收**：ACCEPTED（ACC-U11-a..f 全过，Spec/Standards 双 PASS，含 data/runtime.json 与 .env mtime 前后一致取证）。
+- **涉及文件**：src/agents/{llm,agent,config,web_server}.py、config.yaml、scripts/{webui.html,prepare_offline.py}、tests/test_offline_profile.py（新增 17 用例）。
 
 ---
 
