@@ -114,6 +114,21 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W1 切片记录（2026-09-05，用户驱动前端改版：答案卡对齐设计原型）
+
+- **背景**：用户提供设计原型 demo（桌面 redesign-mockup-final.html，含「重播生成过程」演示），确认改造 webui 答案卡；用户约束——**颜色一律沿用原页面既有 tokens（不引入 demo 黑白配色）**、重播按钮与自动播放仅演示不入生产、三栏布局与其余功能不动。已先在浏览器实跑 demo 学习其时间轴（检索态→生成态→完成态、引用跳转、详情抽屉），并核对其缺陷（检索期 opacity 占位留白、`.evidence-item.no` 选择器失效、生成态残留工具 chip、#fef9c3 高亮无暗色适配）——均未带入实现。
+- **验证证据**：`unittest discover` 179/179 OK（test_egress_defaults/test_memory_governance 对 webui.html 的静态断言原样通过）；node --check（抽取 &lt;script&gt;）通过；全程离线——假 NDJSON fetch 桩模拟 stage/meta/delta/done 完整流，浏览器实测明/暗双主题下的检索态、打字机态（状态框+正文+光标）、完成态、引用 [n] 跳转高亮、详情弹窗与关闭。
+- **实现（仅 scripts/webui.html，后端零改动）**：
+  - 答案卡 5 层：L1 两态状态条（「正在规划与检索」→「正在生成答案 · 引用 N 段内容」+打字机正文与光标 → 完成徽章：模式徽章/首个工具 chip/首个来源/命中 N 段/耗时/成本/详情按钮）；L2 证据折叠（默认收起、按 messageId 记忆开合、生成中隐藏）；L3 操作行（复制/有用/没用+时间戳，生成中隐藏防误点半成品）；L5 回答详情弹窗（字段全部来自 plan/metrics 真实数据：模式/是否联网/检索路径/规划轮次/工具步骤/引用校验/命中/耗时/Token/成本/消息 ID；Esc+遮罩关闭）。
+  - 队列式流渲染：delta 进缓冲、30ms/4 字符打字机节奏，仅增量替换当前流式卡片（data-stream 锚点），替代原先每 delta 全量 renderMessages；用户上滚不强制跟随；中断/出错停表清态（AbortError 语义不变）。
+  - 事件消费增强：stage 事件驱动检索文案；meta 到达即切生成态（此时 sources/metrics 已知，与后端 NDJSON 顺序 stage→meta→delta→done 对齐）；done 错误路径保持原语义。
+  - [n] 引用 chip 化：_mdHtml 将 [数字] 转为可点击 .cite（沿用既有蓝色上标样式+hover 底色），点击展开证据折叠并滚动高亮对应来源行（--blue-soft 闪烁，双主题自适应）。
+  - 移除旧「RETRIEVING 独立占位气泡」与 thinking-state 用法；测试断言的 webState/cite-line 字符串与设置页文案原样保留。
+- **兼容性**：/api 契约不变；用户气泡、INTRO、快速操作、右侧 trace 面板、会话/工作区/记忆/日志/设置未动。demo 中无真实数据源的字段未采纳（缓存命中、快慢路径、追问推荐、面包屑+引句来源卡）——后续可选项：后端 sources_detail 结构化来源、Agent.ask 可选 on_stage 回调实现真「检索→生成」两段事件。
+- **涉及文件**：scripts/webui.html（答案卡 CSS（仅既有变量）、回答详情 modal、liveAnswerHTML/onSend 重写、_mdHtml 引用 chip）。
+
+---
+
 ## G11 切片记录（2026-09-05，控制器续接；实现子代理被取消后遗留的完整工作区改动经控制器核验 + 独立验收子代理确认）
 
 - **验证证据**：`unittest discover` 173/173 OK（G10 后 156 → 新增 test_offline_profile 17 用例）；直跑 20/20 退出码 0；compileall（src+tests+benchmark+scripts）通过；全程离线（ScriptedLLM + TF-IDF 后端 + tempfile，用户 data/runtime.json 与 .env mtime 前后不变）。
