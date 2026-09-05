@@ -222,3 +222,83 @@ export async function askStream(
     if (done) break;
   }
 }
+
+/* ----- 设置（W6-S7）----- */
+
+export interface AppConfig {
+  llm: {
+    api_key_masked?: string;
+    base_url?: string;
+    chat_model?: string;
+    mode?: string;
+    temperature: number;
+    max_tokens: number;
+  };
+  retrieval: {
+    top_k: number;
+    rerank: string;
+    rerank_candidates: number;
+    multi_query: boolean;
+    reranker_model?: string;
+  };
+  vision: { api_key_masked?: string; base_url?: string; model?: string };
+  tools?: { kb_fallback_web?: boolean };
+  memory?: { long_term_enabled?: boolean; entities_enabled?: boolean };
+}
+
+export interface ConfigSavePayload {
+  llm: {
+    api_key: string;
+    base_url: string;
+    chat_model: string;
+    mode: string;
+    temperature: number;
+    max_tokens: number;
+  };
+  retrieval: {
+    top_k: number;
+    rerank: string;
+    rerank_candidates: number;
+    multi_query: boolean;
+    reranker_model: string;
+  };
+  vision: { api_key: string; base_url: string; model: string };
+  tools: { kb_fallback_web: boolean };
+  memory: { long_term_enabled: boolean; entities_enabled: boolean };
+}
+
+export const getConfig = () => jget<AppConfig>("/api/config");
+export const saveConfig = (payload: ConfigSavePayload) => jpost("/api/config", payload);
+export const rebuildKb = (path: string) => jpost("/api/kb", { path });
+
+export interface MemoryEpisode {
+  id: string;
+  question: string;
+  answer_summary: string;
+  session_id?: string;
+  ts?: string;
+  hits?: number;
+  sources?: string[];
+}
+
+export const loadMemory = (q: string) =>
+  jget<{ episodes: MemoryEpisode[]; total?: number; disabled?: boolean }>(
+    `/api/memory?q=${encodeURIComponent(q)}&limit=100`,
+  );
+export const loadMemoryEntities = () =>
+  jget<{ entities: Record<string, { facts?: string[]; last_seen?: string }> }>("/api/memory/entities");
+export async function deleteEpisode(id: string): Promise<void> {
+  const res = await fetch(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+export const clearMemoryAll = () => jpost("/api/memory/clear");
+
+/* ----- 日志（W6-S7）----- */
+
+export const loadLogs = (lines: number) => jget<{ logs?: string[]; error?: string }>(`/api/logs?lines=${lines}`);
+export const clearLogs = () => jpost("/api/logs", { action: "clear" });
+
+/* ----- 工作区创建（W6-S7）----- */
+
+export const createWorkspace = (name: string, kb_path: string) =>
+  jpost<{ workspace_id: string }>("/api/workspaces", { action: "create", name, kb_path });

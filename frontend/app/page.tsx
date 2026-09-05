@@ -26,6 +26,7 @@ import Chat, { type AgentStreamMsg, type ChatHandlers, type MsgVM } from "@/comp
 import Composer, { type PendingImage } from "@/components/Composer";
 import TracePanel, { type SourceVM, type TraceStepVM, type VitalsVM } from "@/components/TracePanel";
 import AnswerDetailModal from "@/components/AnswerDetailModal";
+import SettingsModal, { type SettingsTab } from "@/components/SettingsModal";
 
 const INTRO: MsgVM = { kind: "intro" };
 
@@ -80,6 +81,17 @@ export default function Home() {
   } | null>(null);
   const streamFailedFlag = useRef(false);
   const [detailMsg, setDetailMsg] = useState<AgentStreamMsg | null>(null);
+  /* ----- W6-S7 设置 ----- */
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
+  const [requireModelNotice, setRequireModelNotice] = useState(false);
+  const [llmConfigured, setLlmConfigured] = useState(true);
+  const setupPromptShown = useRef(false);
+  const openSettings = useCallback((tab: SettingsTab = "model", requireModel = false) => {
+    setSettingsTab(tab);
+    setRequireModelNotice(requireModel);
+    setSettingsOpen(true);
+  }, []);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   /* ----- W6-S6 面板状态 ----- */
   const [traceSteps, setTraceSteps] = useState<TraceStepVM[]>(IDLE_STEPS);
@@ -563,6 +575,11 @@ export default function Home() {
   const refreshStatus = useCallback(async () => {
     try {
       const st = await api.status();
+      setLlmConfigured(Boolean(st.llm_configured));
+      if (!st.llm_configured && !setupPromptShown.current) {
+        setupPromptShown.current = true;
+        openSettings("model", true);
+      }
       setIndexState({ label: st.building ? "已连接 · 重建中" : "已连接 · 已同步", ok: true });
       setMemCount(st.memory_turns ?? 0);
       const used = st.context?.prompt_tokens ?? 0;
@@ -586,7 +603,7 @@ export default function Home() {
       setIndexState({ label: "后端未连接", ok: false });
       setKb((k) => ({ ...k, syncLabel: "连接中断" }));
     }
-  }, []);
+  }, [openSettings]);
 
   useEffect(() => {
     const beat = () => {
@@ -684,7 +701,7 @@ export default function Home() {
         memCount={memCount}
         onSwitchWorkspace={onSwitchWorkspace}
         onResetSession={onResetSession}
-        onOpenSettings={() => showToast("设置面板将在 S7 迁移", false)}
+        onOpenSettings={() => openSettings("model")}
         onToggleTheme={onToggleTheme}
       />
       <Rail
@@ -698,7 +715,7 @@ export default function Home() {
           if (!busy) void openSession(id);
         }}
         onDeleteSession={(id) => void onDeleteSession(id)}
-        onManageKb={() => showToast("知识库管理将在 S7 迁移", false)}
+        onManageKb={() => openSettings("kb")}
       />
       <main className="chat">
         <Chat messages={messages} welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }} handlers={handlers} />
@@ -725,6 +742,27 @@ export default function Home() {
         onTaskAction={(id, action) => void onTaskAction(id, action)}
       />
       <AnswerDetailModal msg={detailMsg} onClose={() => setDetailMsg(null)} />
+      <SettingsModal
+        open={settingsOpen}
+        initialTab={settingsTab}
+        requireModelNotice={requireModelNotice}
+        llmConfigured={llmConfigured}
+        onClose={() => setSettingsOpen(false)}
+        onToast={showToast}
+        onSaved={() => void refreshStatus()}
+        onWorkspaceCreated={(id) => {
+          void (async () => {
+            try {
+              const data = await api.workspaces();
+              setWorkspaces(data.workspaces.map((w) => ({ id: w.id, name: w.name })));
+              setActiveWorkspace(data.active);
+              await loadSessionsInto(data.active, id);
+            } catch (_e) {
+              /* 静默 */
+            }
+          })();
+        }}
+      />
       <div className={`toast${toast ? " show" : ""}`} style={toast?.error ? { background: "var(--red)" } : undefined}>
         {toast?.msg}
       </div>
