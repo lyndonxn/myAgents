@@ -749,8 +749,6 @@ export default function Home() {
         activeWorkspace={activeWorkspace}
         indexState={indexState}
         memCount={memCount}
-        railCollapsed={railCollapsed}
-        onToggleRail={onToggleRail}
         onSwitchWorkspace={onSwitchWorkspace}
         onResetSession={onResetSession}
         onOpenSettings={() => openSettings("model")}
@@ -784,6 +782,8 @@ export default function Home() {
           value={inputValue}
           busy={busy}
           pendingImage={pendingImage}
+          railCollapsed={railCollapsed}
+          onToggleRail={onToggleRail}
           onChange={setInputValue}
           onSubmit={() => void onSend()}
           onStop={onStop}

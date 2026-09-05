@@ -805,11 +805,5 @@ body{
 .app.rail-collapsed{--rail-w:0px;}
 /* 用 visibility 而非 display：保留栅格占位，聊天区/右侧面板列位不变 */
 .app.rail-collapsed .rail{visibility:hidden;}
-.rail-toggle{
-  appearance:none;border:none;background:none;cursor:pointer;
-  width:30px;height:30px;border-radius:6px;flex-shrink:0;
-  display:inline-flex;align-items:center;justify-content:center;
-  color:var(--mute);font-size:15px;line-height:1;
-  transition:color .12s,background .12s;
-}
-.rail-toggle:hover{color:var(--ink);background:var(--bg);}
+.iconbtn.rail-toggle{width:32px;height:32px;min-width:32px;}
+.iconbtn.rail-toggle.collapsed svg{transform:rotate(180deg);}

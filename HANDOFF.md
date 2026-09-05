@@ -116,7 +116,7 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ## W9 记录（2026-09-05，左侧栏收起/展开）
 
-- **内容**：左侧栏支持一键收起/展开——TopBar 左缘新增切换按钮（‹/›）；栅格列宽变量化（`--rail-w`），收起时 `--rail-w:0px` + `.rail{visibility:hidden}`（**用 visibility 保留栅格占位**：display:none 会把侧栏移出栅格导致聊天区补位到 0 宽列、与右面板重叠——实测抓出后修正）；聊天区自动占满释放宽度；状态存 localStorage（prerender 安全：挂载后恢复）。窄屏（≤840px）侧栏本就隐藏，不受影响。
+- **内容**：左侧栏支持一键收起/展开——切换按钮位于**输入区操作行最左**（用户反馈调整：不放顶栏，顶栏保留 logo 等原样），圆形图标钮（侧栏可见时 ‹ 收起 / 收起时 › 展开）；栅格列宽变量化（`--rail-w`），收起时 `--rail-w:0px` + `.rail{visibility:hidden}`（**用 visibility 保留栅格占位**：display:none 会把侧栏移出栅格导致聊天区补位到 0 宽列、与右面板重叠——实测抓出后修正）；聊天区自动占满释放宽度；状态存 localStorage（prerender 安全：挂载后恢复）。窄屏（≤840px）侧栏本就隐藏，不受影响。
 - **验证**：typecheck/build/197 全绿；浏览器实测——收起态 rail 不可见、聊天区 1100px 占满、右面板 x=1100 不变；展开态恢复 848px/侧栏可见；刷新后记忆保持。
 - **涉及文件**：frontend/app/globals.css、frontend/components/TopBar.tsx、frontend/app/page.tsx。
 

@@ -15,6 +15,8 @@ export default function Composer(props: {
   value: string;
   busy: boolean;
   pendingImage: PendingImage | null;
+  railCollapsed: boolean;
+  onToggleRail: () => void;
   onChange: (v: string) => void;
   onSubmit: () => void;
   onStop: () => void;
@@ -154,6 +156,27 @@ export default function Composer(props: {
             }}
           />
           <div className="input-actions">
+            <button
+              className={`iconbtn addbtn rail-toggle${props.railCollapsed ? " collapsed" : ""}`}
+              title={props.railCollapsed ? "展开侧栏" : "收起侧栏"}
+              aria-label={props.railCollapsed ? "展开侧栏" : "收起侧栏"}
+              type="button"
+              onClick={props.onToggleRail}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                {props.railCollapsed ? (
+                  <>
+                    <line x1="9" y1="5" x2="9" y2="19" />
+                    <polyline points="15 5 9 12 15 19" />
+                  </>
+                ) : (
+                  <>
+                    <line x1="15" y1="5" x2="15" y2="19" />
+                    <polyline points="9 5 15 12 9 19" />
+                  </>
+                )}
+              </svg>
+            </button>
             <button
               className="iconbtn addbtn"
               id="imgBtn"
