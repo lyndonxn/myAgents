@@ -65,6 +65,7 @@ export default function Home() {
     syncLabel: "连接中",
   });
   const [ctxPct, setCtxPct] = useState(0);
+  const [ctxK, setCtxK] = useState({ used: 0, max: 128000 });
   const [toast, setToast] = useState<{ msg: string; error: boolean } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /* 流式发送状态 */
@@ -626,6 +627,7 @@ export default function Home() {
       const used = st.context?.prompt_tokens ?? 0;
       const max = st.context?.max_context ?? 128000;
       setCtxPct(Math.min(1, used / max));
+      setCtxK({ used, max });
       const [kbR, stR] = await Promise.allSettled([api.kb(), api.stats()]);
       if (kbR.status === "fulfilled")
         setKb((k) => ({
@@ -779,6 +781,7 @@ export default function Home() {
         />
         <Composer
           ctxPct={ctxPct}
+          ctxK={ctxK}
           value={inputValue}
           busy={busy}
           pendingImage={pendingImage}

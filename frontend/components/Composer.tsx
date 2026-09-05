@@ -12,6 +12,7 @@ export interface PendingImage {
 
 export default function Composer(props: {
   ctxPct: number;
+  ctxK?: { used: number; max: number };
   value: string;
   busy: boolean;
   pendingImage: PendingImage | null;
@@ -118,7 +119,11 @@ export default function Composer(props: {
   return (
     <div className="composer">
       {/* W6-S8 补回：上下文竖轨（S5 重写时遗失）——绝对定位锚定 .chat 左缘 */}
-      <div className="ctx-rail" id="ctxLine" title="上下文容量">
+      <div
+        className="ctx-rail"
+        id="ctxLine"
+        title={`上下文 ${((props.ctxK?.used ?? 0) / 1000).toFixed(1)}K / ${((props.ctxK?.max ?? 128000) / 1000).toFixed(0)}K（${Math.round(props.ctxPct * 100)}%）`}
+      >
         {Array.from({ length: segs }, (_, i) => (
           <span key={i} className="seg" style={{ background: i < active ? color : "var(--line)" }} />
         ))}
