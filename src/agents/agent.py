@@ -575,6 +575,43 @@ class Agent:
         )
         return answer
 
+    def suggest_followups(self, question: str, answer_text: str, count: int = 2) -> list[str]:
+        """基于本轮问答生成用户可能的追问建议（W3，供流式端点在 done 后下发）。
+
+        使用独立 LLMClient 实例：不污染 ask 的调用计数与 token 统计，也不与会话
+        记忆/审计会话上下文交互。任何失败（未配置、网络、JSON 解析）都静默返回
+        空表——追问是增值信息，绝不能影响主回答。
+        """
+        try:
+            self.ensure_llm()
+            count = max(1, min(int(count or 2), 3))
+            client = LLMClient(self.config)
+            obj = client.chat_json([
+                {"role": "system", "content": (
+                    "你是知识库问答助手的追问推荐器。基于用户问题与助手回答，提出用户最可能继续追问的问题："
+                    "必须与回答内容强相关、口语化、简短（不超过30个字）、可直接作为用户输入发送；"
+                    "不要重复原问题，不要解释。"
+                )},
+                {"role": "user", "content": (
+                    f"【用户问题】{question[:300]}\n【助手回答】{str(answer_text or '')[:800]}\n\n"
+                    f'只输出 JSON：{{"questions": ["问题1", "问题2"]}}（恰好 {count} 个）'
+                )},
+            ])
+            items = obj.get("questions") if isinstance(obj, dict) else None
+            if not isinstance(items, list):
+                return []
+            out: list[str] = []
+            for raw in items or []:
+                text = str(raw).strip()
+                if text:
+                    out.append(text[:60])
+                if len(out) >= count:
+                    break
+            return out
+        except Exception as exc:  # noqa: BLE001 - 追问生成失败不影响主回答
+            LOG.debug("追问建议生成失败（已忽略）: %s", exc)
+            return []
+
     def _audit_ask(self, question: str, answer: Answer, session_id: str) -> None:
         """ask 终态审计事件（G6 埋点单点）：正文仅在 audit.log_content 显式开启时写入。"""
         audit = audit_mod.get()

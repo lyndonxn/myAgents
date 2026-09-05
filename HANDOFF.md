@@ -114,6 +114,19 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W3 切片记录（2026-09-05，用户实测反馈修复 + 答案卡严格还原图1/图2）
+
+- **背景**：用户实测 W1/W2 后报三类问题：①最严重——回答完成后答案消失；②卡头未按原型实现（RESPONSE·01 + 图标操作）；③操作行/追问区缺失，要求严格还原图1（卡头+状态条）图2（操作行+追问）。追问数据源经用户拍板：**LLM 生成**。
+- **验证证据**：`unittest discover` **191/191 OK**（W2 后 188 → 新增 test_followups 3 用例）；node --check 通过；独立验收子代理 **ACCEPTED（ACC-W3-01..06 全 PASS，Standards PASS）**；浏览器冒烟（假 NDJSON 桩 + 真行为历史桩）：第一问完成→延迟会话交换后答案保留、追问区保留，追问点击→第二轮流式生成且第一轮完整（RESPONSE·01/02 递增），明/暗双主题截图核对；全程离线（测试零网络）。
+- **答案消失根因与修复（ACC-W3-01）**：旧 `loadSessions()` 重建 SESSIONS 时把 messages 重置回 `[INTRO]`，而 W1 播放器收尾 `renderMessages()` 发生在其之后 → 读到空会话（该缺陷 W1 冒烟时被假桩的空历史掩盖，误判为桩伪影——教训：桩必须仿真后端真实时序）。修复：①重建列表按 id 保留内存 messages；②`loadSessions` 加 busy 守卫；③onSend 的会话刷新移到 finally 延迟 50ms（busy=false 后，openSession 以已落库历史重渲染）；④openSession 交换历史时按消息 id 继承 followups 等内存态；⑤ask 真失败（非中断）跳过延迟刷新（验收发现①，避免错误提示被未落库空历史冲掉；中断场景答案已落库仍刷新换回完整回答）；⑥openSession fetch 返回后补 busy 检查（验收发现②，封掉替换吞新消息的窗口）。
+- **严格还原（图1/图2，ACC-W3-02..04）**：卡头 `RESPONSE · NN`（renderMessages 预扫序号，INTRO 不计入）+ 复制/重新生成/分享图标（真实函数：copyAnswer / regenerateAnswer=以原问题重新提问追加 / shareAnswer=navigator.share 失败兜底复制）；状态条改为 模式图标+文字（📖知识库 / 🌐联网(amber) / 💬模型回答）· 工具 chip · 命中 N 段 · 耗时 · 成本 · 右侧☀详情（去掉 W1 的徽章胶囊与来源名，信息在证据卡）；操作行改为边框按钮组 复制答案/有帮助/不满意 + 右侧重新生成（feedback .on 回显）；虚线分隔 + 追问 ↓ + → 前缀全宽按钮（data-q + chatInner 事件委托 → quickAsk）。颜色全部沿用既有 tokens；`webState/citeLine` 测试断言字符串原样保留。
+- **追问 LLM 生成（ACC-W3-05）**：`Agent.suggest_followups(question, answer_text, count=2)`——独立 LLMClient 实例（不污染 ask 的 llm_calls/token 计数，审计照记属合理）、`chat_json` 强约束输出、questions 非列表/异常/未配置一律回空、逐项 ≤60 字截断；`/api/ask_stream` 在 **done 之后** 发 `followups` 事件（不拖慢正文与操作行呈现，仅 answer 无错误时）；前端 done 后收到事件写入 msg 并按 messageId findAnswer 同步交换后对象，追问区随卡片渲染，无数据即隐藏。已知边界：followups 不落库——同会话内经 openSession 继承保留，页面重载后不显示（后续可选：写回 metrics 持久化）。
+- **顺带修复**：用户气泡暗色不可读（`color:#F8FAFC` 硬编码 → `var(--panel)` 随主题翻转，W1 之前既有缺陷）。
+- **验收子代理非阻塞发现（已处理/知悉）**：①错误路径刷新冲掉提示 → 已修（streamFailed 跳过）；②延迟刷新 fetch 窗口竞态 → 已修（openSession 二次 busy 检查）；③followups 独立客户端产生 llm_call 审计事件 → 知悉（审计全量 LLM 调用口径正确，answer 计数不受影响）；④提示词中 runInPipeline 为笔误，无实际问题。
+- **涉及文件**：src/agents/{agent,web_server}.py、scripts/webui.html、tests/test_followups.py（新增）。
+
+---
+
 ## W2 切片记录（2026-09-05，用户驱动前端改版续篇：结构化证据卡 + 真阶段事件）
 
 - **背景**：W1 的后续切片（用户「继续」确认）：demo 证据卡的三级结构（标题/路径/引句）需要真实数据源；「检索→生成」两段状态需要后端真事件而非前端假切换。

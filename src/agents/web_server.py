@@ -669,6 +669,16 @@ class Handler(BaseHTTPRequestHandler):
                 for start in range(0, len(text), 24):
                     emit("delta", text=text[start:start + 24])
                 emit("done", error=response["error"])
+                # W3：追问建议（LLM 生成）。放在 done 之后：不拖慢正文与操作行的呈现；
+                # 生成失败/未配置时静默省略该事件，前端隐藏追问区。
+                if not response["error"]:
+                    try:
+                        items = self.agent.suggest_followups(question, response["answer"])
+                    except Exception:  # noqa: BLE001 - 追问是增值信息，绝不影响流式收尾
+                        LOG.debug("追问建议生成失败", exc_info=True)
+                        items = []
+                    if items:
+                        emit("followups", items=items)
             except Exception:  # noqa: BLE001 - headers already sent; keep the NDJSON stream valid
                 LOG.exception("流式问答生成失败")
                 emit("done", error="回答生成失败，请检查模型配置或查看日志")
