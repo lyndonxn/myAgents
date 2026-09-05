@@ -47,7 +47,7 @@ LOG = get_logger("web")
 
 # 可从前端编辑的配置项白名单（深层覆盖）
 CONFIG_FIELDS = {
-    "llm": {"base_url", "chat_model", "temperature", "max_tokens"},
+    "llm": {"base_url", "chat_model", "temperature", "max_tokens", "mode"},
     "retrieval": {"top_k", "rerank", "rerank_candidates", "multi_query", "reranker_model"},
     "vision": {"base_url", "model", "api_key"},
     "audit": {"retention_days", "log_content"},
@@ -998,6 +998,7 @@ class Handler(BaseHTTPRequestHandler):
                 "chat_model": cfg.llm_chat_model,
                 "temperature": cfg.llm_temperature,
                 "max_tokens": cfg.llm_max_tokens,
+                "mode": cfg.llm_mode,
                 "api_key_masked": mask_key(cfg.llm_api_key),
             },
             "retrieval": {

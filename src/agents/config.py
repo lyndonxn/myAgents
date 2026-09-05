@@ -187,6 +187,7 @@ _ENUM_CHOICES: dict[str, tuple[str, ...]] = {
     "retrieval.fusion_mode": ("rrf", "weighted"),
     "embedding.backend": ("auto", "local", "tfidf"),
     "memory.embedding_backend": ("auto", "local", "tfidf"),
+    "llm.mode": ("cloud", "local"),  # G11：离线档位（local=本地 OpenAI 兼容端点）
 }
 _BOOL_STR_TRUE = frozenset({"true", "1", "yes"})
 _BOOL_STR_FALSE = frozenset({"false", "0", "no"})
@@ -534,6 +535,11 @@ class Config:
     @property
     def contextual_augment(self) -> bool:
         return bool(self.get("chunking.contextual_augment", False))
+
+    @property
+    def llm_mode(self) -> str:
+        """cloud（默认，云端 API，需 Key）| local（本地 OpenAI 兼容端点：允许空 Key、运行期禁外发）。G11。"""
+        return str(self.get("llm.mode", "cloud") or "cloud").lower()
 
     @property
     def llm_base_url(self) -> str:

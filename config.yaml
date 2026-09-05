@@ -39,6 +39,7 @@ retrieval:
 
 # LLM 配置（DeepSeek，OpenAI 兼容）
 llm:
+  mode: "cloud"          # cloud（默认，云端 API，需 API Key）| local（本地 OpenAI 兼容端点，如 Ollama http://localhost:11434/v1；数据不出本机，允许 API Key 留空，运行期强制禁用联网搜索）
   base_url: "https://api.deepseek.com"
   chat_model: "deepseek-chat"
   temperature: 0.3

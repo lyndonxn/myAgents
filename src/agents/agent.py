@@ -16,6 +16,8 @@ ask(question) 返回结构化 Answer：计划、步骤结果、最终答案、�
 数据外发与记忆许可（G3/P0-3）：ask 增加可选 kwargs remember / allow_web（缺省 None →
 按 config 默认值）。allow_web=False 强禁本次联网：规划工具清单剔除 web_search、
 executor 的 KB→Web 降级跳过；allow_web=True 强许（配置为 false 也生效）。
+离线档位（G11）：llm.mode=local 时 resolve_allow_web 一律钳制为 False——KB 未命中走
+未命中披露路径，web 工具不进规划清单、executor 降级门控关闭，全程零外发。
 remember=False 时本次成功问答不写长期记忆、不抽实体。
 任务路径拆解件（S5）：plan_only/finish_task 把 ask 的「规划」「合成+引用校验」拆给
 后台任务运行器复用（暂停/恢复/逐步持久化），ask 本身行为不变。
@@ -75,6 +77,22 @@ def _is_simple_question(question: str, max_len: int = 60) -> bool:
     if text.count("？") + text.count("?") > 1 or text.count("，") + text.count(",") >= 2:
         return False
     return not any(marker in text for marker in _MULTI_HOP_MARKERS)
+
+
+# G11 离线档位「忽略联网请求」提示只提示一次/进程（resolve_allow_web 每步都会调用）
+_offline_web_hint_shown = False
+
+
+def _note_offline_web_clamped() -> None:
+    """离线档位钳制联网请求时 LOG.info 一次/进程（不刷屏，不改变钳制语义）。"""
+    global _offline_web_hint_shown
+    if _offline_web_hint_shown:
+        return
+    _offline_web_hint_shown = True
+    LOG.info(
+        "离线档位忽略联网请求：llm.mode=local 时不允许任何外发（allow_web 一律按 false 执行）。"
+        "如需联网检索，请到设置把运行模式改回云端（cloud）。"
+    )
 
 
 def compress_evidence(text: str, query: str, target_ratio: float = 0.7, min_chars: int = 200) -> str:
@@ -372,7 +390,18 @@ class Agent:
     # ================= 问答 =================
 
     def resolve_allow_web(self, allow_web: bool | None) -> bool:
-        """把请求级联网许可解析为生效值（G3）：None → 按 config.kb_fallback_web，显式值强禁/强许。"""
+        """把请求级联网许可解析为生效值（G3）。
+
+        - cloud 档位：None → 按 config.kb_fallback_web；显式值强禁/强许；
+        - local 档位（G11 离线）：一律钳制为 False——离线档位数据不出本机，
+          即使请求传 allow_web=true 也强制忽略（一次/进程 LOG.info 提示）。
+        ask / plan_only / task_runner 的联网许可都经此单点解析，钳制同时覆盖三条路径。
+        """
+        if str(getattr(self.config, "llm_mode", "cloud") or "cloud").lower() == "local":
+            would_allow = self.config.kb_fallback_web if allow_web is None else bool(allow_web)
+            if would_allow:
+                _note_offline_web_clamped()
+            return False
         return self.config.kb_fallback_web if allow_web is None else bool(allow_web)
 
     def _tools_for_run(self, allow_web: bool) -> dict:

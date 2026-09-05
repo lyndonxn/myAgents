@@ -4,6 +4,10 @@
 - chat(messages) -> str：普通对话
 - chat_json(messages) -> dict|list：要求结构化 JSON 输出并稳健解析
 - 统计 usage（输入/输出 token）与耗时，供评测与成本估算
+
+G11 离线档位：llm.mode=local 时指向本地 OpenAI 兼容端点（如 Ollama），
+允许 API Key 为空（请求头不带 Authorization）；非 deepseek 模型的 JSON
+输出约束退化为提示词侧强约束（修复轮机制不变）。
 """
 from __future__ import annotations
 
@@ -21,6 +25,14 @@ class LLMError(RuntimeError):
     pass
 
 
+# G11：非 deepseek 模型（本地端点常见）不支持 response_format={"type":"json_object"}，
+# chat_json 退而求其次，在 messages 副本末尾追加这条提示词侧强约束。
+_JSON_ONLY_SYSTEM_HINT = (
+    "只输出合法 JSON：不要输出任何解释文字、Markdown 代码围栏或其他内容，"
+    "你的整条回复必须能被 json.loads 直接解析。"
+)
+
+
 @dataclass
 class ChatResult:
     text: str
@@ -35,7 +47,10 @@ class LLMClient:
         self.config = config
         self.base_url = (base_url or config.llm_base_url).rstrip("/")
         self.api_key = api_key if api_key is not None else config.llm_api_key
-        if not self.api_key:
+        # G11：local 档位（本地 OpenAI 兼容端点，如 Ollama）允许 API Key 为空；
+        # cloud 档位保持原行为（无 Key 抛错提示）。
+        self._local_mode = str(getattr(config, "llm_mode", "cloud") or "cloud").lower() == "local"
+        if not self.api_key and not self._local_mode:
             raise LLMError(
                 "未找到 DEEPSEEK_API_KEY。请在项目根目录创建 .env（参考 .env.example）"
                 "并填入你的 DeepSeek API Key。"
@@ -71,6 +86,13 @@ class LLMClient:
         return result.text
 
     # ---- 底层请求 ----
+    def _request_headers(self) -> dict:
+        """构造请求头（G11）：API Key 为空（local 档位允许）时不带 Authorization 头。"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
     def _chat(
         self,
         messages: list[dict],
@@ -96,10 +118,7 @@ class LLMClient:
             try:
                 resp = requests.post(
                     url,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=self._request_headers(),
                     json=payload,
                     timeout=self.config.llm_timeout,
                 )
@@ -161,17 +180,24 @@ class LLMClient:
 
         修复轮与 _chat 的网络重试是两层：本方法在"模型已返回但解析失败"时，
         把坏输出连同修复指令追加进对话再请求（llm.json_repair_rounds 轮）。
+        G11：deepseek 模型用服务端 response_format 约束；其他模型（本地端点常见）
+        在 messages 副本末尾追加提示词侧 JSON 强约束（不修改调用方列表），修复轮保持。
         """
         use_format = self.config.llm_chat_model.startswith(("deepseek-chat", "deepseek-reasoner"))
-        response_format = {"type": "json_object"} if use_format else None
-        result = self._chat_audited(messages, response_format=response_format, **kwargs)
+        if use_format:
+            response_format: dict | None = {"type": "json_object"}
+            request_messages = messages
+        else:
+            response_format = None
+            request_messages = [*messages, {"role": "system", "content": _JSON_ONLY_SYSTEM_HINT}]
+        result = self._chat_audited(request_messages, response_format=response_format, **kwargs)
         try:
             return parse_json_robust(result.text)
         except LLMError as first_err:
             rounds = max(0, int(getattr(self.config, "llm_json_repair_rounds", 1) or 0))
             if rounds <= 0:
                 raise
-            convo = list(messages)
+            convo = list(request_messages)
             bad_text, last_err = result.text, first_err
             for _ in range(rounds):
                 convo = convo + [

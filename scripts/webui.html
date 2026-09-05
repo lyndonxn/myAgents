@@ -766,8 +766,10 @@ body{
     <div class="settings-grid settings-page active" id="modelPage">
       <div class="setup-notice" id="setupNotice" hidden><b>首次使用需要配置模型</b><br>填写 API Key 后保存即可开始问答。密钥仅保存在本机运行目录，不会显示在页面或提交到 Git。</div>
       <div class="field"><label>模型服务</label><select id="cfgProvider"><option value="deepseek">DeepSeek（推荐）</option><option value="custom">自定义兼容接口</option></select></div>
+      <div class="field"><label>运行模式</label><select id="cfgMode"><option value="cloud">云端 API（默认）</option><option value="local">本地离线（Ollama 等）</option></select></div>
       <div class="field"><label>API KEY（留空保持现有值）</label><input id="cfgKey" type="password" placeholder="sk-..."></div>
       <div class="settings-hint">使用 DeepSeek 时只需填写 API Key，其余参数已采用推荐默认值。</div>
+      <div class="settings-hint">离线模式：使用本地模型端点，数据不出本机；API Key 可留空，联网搜索将被禁用。</div>
       <details class="advanced-settings"><summary>高级模型设置</summary><div class="advanced-grid">
         <div class="field"><label>API 地址</label><input id="cfgBase"></div>
         <div class="field"><label>模型</label><input id="cfgModel"></div>
@@ -1514,6 +1516,7 @@ async function openSettings(requireModel=false){
     const [cfg,kb]=await Promise.all([fetch('/api/config').then(r=>r.json()),fetch('/api/kb').then(r=>r.json())]);
     document.getElementById('cfgKey').placeholder=cfg.llm.api_key_masked||'sk-...';
     document.getElementById('cfgBase').value=cfg.llm.base_url||'';document.getElementById('cfgModel').value=cfg.llm.chat_model||'';
+    document.getElementById('cfgMode').value=cfg.llm.mode||'cloud';
     document.getElementById('cfgProvider').value=(cfg.llm.base_url||'').includes('api.deepseek.com')?'deepseek':'custom';
     document.getElementById('cfgTemp').value=cfg.llm.temperature;document.getElementById('cfgTokens').value=cfg.llm.max_tokens;
     document.getElementById('cfgTopK').value=cfg.retrieval.top_k;document.getElementById('cfgRerank').value=cfg.retrieval.rerank;
@@ -1526,8 +1529,8 @@ async function openSettings(requireModel=false){
   }catch(error){showToast(requestErrorMessage(error),true);}
 }
 async function saveSettings(){
-  const key=document.getElementById('cfgKey').value.trim();if(!llmConfigured&&!key){showToast('请填写模型 API Key',true);document.getElementById('cfgKey').focus();return;}
-  const payload={llm:{api_key:key,base_url:document.getElementById('cfgBase').value.trim(),chat_model:document.getElementById('cfgModel').value.trim(),temperature:Number(document.getElementById('cfgTemp').value),max_tokens:Number(document.getElementById('cfgTokens').value)},retrieval:{top_k:Number(document.getElementById('cfgTopK').value),rerank:document.getElementById('cfgRerank').value,rerank_candidates:Number(document.getElementById('cfgCandidates').value),multi_query:document.getElementById('cfgMulti').value==='true',reranker_model:document.getElementById('cfgRerankerModel').value.trim()},vision:{api_key:document.getElementById('cfgVisionKey').value,base_url:document.getElementById('cfgVisionBase').value.trim(),model:document.getElementById('cfgVisionModel').value.trim()}};
+  const key=document.getElementById('cfgKey').value.trim();if(!llmConfigured&&!key&&document.getElementById('cfgMode').value!=='local'){showToast('请填写模型 API Key',true);document.getElementById('cfgKey').focus();return;}
+  const payload={llm:{api_key:key,base_url:document.getElementById('cfgBase').value.trim(),chat_model:document.getElementById('cfgModel').value.trim(),mode:document.getElementById('cfgMode').value,temperature:Number(document.getElementById('cfgTemp').value),max_tokens:Number(document.getElementById('cfgTokens').value)},retrieval:{top_k:Number(document.getElementById('cfgTopK').value),rerank:document.getElementById('cfgRerank').value,rerank_candidates:Number(document.getElementById('cfgCandidates').value),multi_query:document.getElementById('cfgMulti').value==='true',reranker_model:document.getElementById('cfgRerankerModel').value.trim()},vision:{api_key:document.getElementById('cfgVisionKey').value,base_url:document.getElementById('cfgVisionBase').value.trim(),model:document.getElementById('cfgVisionModel').value.trim()}};
   try{const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await r.json();if(!r.ok||data.error)throw new Error(data.error||'保存失败');llmConfigured=true;document.getElementById('setupNotice').hidden=true;document.getElementById('cfgKey').value='';document.getElementById('cfgVisionKey').value='';closeSettings();showToast('模型配置已保存，可以开始提问');refreshStatus();}catch(error){showToast(requestErrorMessage(error),true);}
 }
 async function rebuildKb(){
