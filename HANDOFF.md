@@ -114,6 +114,20 @@ darwin 25.6.0 arm64；原生 Read/Glob/Grep/Bash/Edit 可用（Windows 脚本不
 
 ---
 
+## W7 记录（2026-09-05，用户实测反馈三项 UI 精修）
+
+- **内容**：①证据列表改图1 独立卡片式——每来源一张圆角卡（圈号 `.ev-no` + 标题 + 面包屑 + 「」引句框），折叠头改「⌄ N 个引用来源 ⌃」双侧 chevron（展开左旋）；引用跳转选择器随行结构更新为 `[data-idx]`；②详情改右侧抽屉——`.detail-drawer` 420px 右滑入（slide-in 动画）+ 遮罩，标题「检索详情 · DEBUG」，行内容复用 ad-row/ad-badge；③生成阶段改「转圈圈 + 流式输出」（图3）——streaming 相恢复 spinner + 状态文字 + 工具 chip（去除静默线；检索阶段维持原 spinner+扫描条）。
+- **验证**：typecheck/build/197 全绿；8787 桩流+真实历史冒烟：streaming 相 spinner/chip/无扫描条断言通过、证据卡 7 张渲染（圈号/标题/「」引句）、抽屉右侧锚定 11 行字段全对。
+- **涉及文件**：frontend/components/{AnswerCard,AnswerDetailModal,Chat}.tsx、frontend/app/globals.css。
+
+## W7 记录（2026-09-05，用户实测反馈三项 UI 精修）
+
+- **内容**：①证据列表改图1 独立卡片式——每来源一张圆角卡（圈号 `.ev-no` + 标题 + 面包屑 + 「」引句框），折叠头改「⌄ N 个引用来源 ⌃」双侧 chevron（展开左旋）；引用跳转选择器随行结构更新为 `[data-idx]`；②详情改右侧抽屉——`.detail-drawer` 420px 右滑入（slide-in 动画）+ 遮罩，标题「检索详情 · DEBUG」，行内容复用 ad-row/ad-badge；③生成阶段改「转圈圈 + 流式输出」（图3）——streaming 相恢复 spinner + 状态文字 + 工具 chip（去除静默线；检索阶段维持原 spinner）。
+- **追加（同日用户反馈）**：①检索/生成阶段均去掉扫描线条（spinner-only，此前「二者都在」反馈）；②证据折叠条补 `.show` 类——`.block` 默认 opacity:0，缺 show 导致证据条整体透明（即用户报的「参考来源并没有实现」真根因）；③引用来源整体缩小一号（卡片 9px/12px 内边距、标题 12.5px、圈号 18px、折叠头 6px/12px）。
+- **验证**：typecheck/build/197 全绿；8787 桩流+真实历史冒烟：streaming 相 spinner/chip/无扫描条、证据卡渲染（圈号/标题/「」引句）、抽屉右侧锚定 11 行、折叠展开跨轮询持久（受控 details，React 19 重渲染会重置 innerHTML 子树与非受控 details——参考来源折叠必须走受控 JSX）、缩小后样式截图核对。
+- **涉及文件**：frontend/components/{AnswerCard,AnswerDetailModal,Chat}.tsx、frontend/app/globals.css。
+- **提交**：5b4d36f（W7 三项）、8dc166c（扫描条+show 类）、e9dddcc（缩小一号）。
+
 ## W6 切片记录（2026-09-05，前端 Next.js 改写启动；S1 脚手架+管线完成）
 
 - **S8 完成（同日，迁移收尾切换）**：①legacy 退役——`scripts/webui.html` 删除（git 历史 + 标签 `webui-html-final` + 副本 `webui.legacy.html` 三重回溯），服务器 `PAGE` 回退路径改指 `webui.legacy.html`（未构建 out/ 的环境仍可双击启动）；②三个读 webui.html 的静态断言测试迁移到前端源码（egress 两例→AnswerCard/SettingsModal/page 断言渲染条件 `data.metrics?.degraded ?`/`web_used ?` 与三开关 state/payload/回填/label/hint；memory 治理一例→SettingsModal/lib/api 断言接口与确认文案；记忆页补齐 legacy 的「长期记忆与实体记忆默认关闭…」hint）；③轨迹终态修复——setTimeout 链改单个 interval 确定性步进（doneSteps 6/6 验证）；④openSession 同会话重开（延迟刷新）不再重置轨迹/来源/指标。**验证**：typecheck/build 通过、**197/197 OK**（含迁移后断言）；8789 桩流终验：doneSteps 6、来源 2 条、指标保留、答案持久。**切换说明**：用户下次启动（双击启动器或本工具重启）8787 即为 Next.js 版；out/ 已在本地（gitignored），全新克隆需 `cd frontend && npm install && npm run build`。**约束记录**：AGENTS.md「轻依赖」为 Python 口径，Node 工具链系用户明确指令引入（Next.js 改写），运行时仍单进程无新增 Python 依赖。
