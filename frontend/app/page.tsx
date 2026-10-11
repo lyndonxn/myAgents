@@ -8,6 +8,7 @@ import {
   api,
   askImage,
   askStream,
+  clarify as clarifyApi,
   loadTaskDetail,
   loadTasks,
   ModelNotConfiguredError,
@@ -72,6 +73,8 @@ export default function Home() {
   /* 流式发送状态 */
   const [inputValue, setInputValue] = useState("");
   const [busy, setBusy] = useState(false);
+  /* LangGraph 澄清（spec/09 T-010）：挂起澄清信息，非空时聊天尾部渲染澄清卡片 */
+  const [clarify, setClarify] = useState<{ question: string; message: string } | null>(null);
   const [tick, setTick] = useState(0);
   const seqRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -462,6 +465,11 @@ export default function Home() {
               } else if (ev.event === "delta") {
                 streamed.answer += String(ev.text || "");
                 player.buf = streamed.answer;
+              } else if (ev.event === "clarify") {
+                /* LangGraph 澄清挂起（spec/09 T-010）：结束当前流卡并在尾部渲染澄清卡片 */
+                msg.phase = "done";
+                setClarify({ question: String(ev.question || ""), message: String(ev.message || "") });
+                setTick((t) => t + 1);
               } else if (ev.event === "followups") {
                 msg.followups = ((ev.items as string[]) || []).slice(0, 3);
                 if (player.finished) setTick((t) => t + 1);
@@ -529,6 +537,61 @@ export default function Home() {
       }
     },
     [busy, inputValue, currentSession, showToast, refreshSessionsList],
+  );
+
+  /* 澄清提交（spec/09 T-010）：/api/clarify 恢复图执行，非流式出卡（同 ask_image 渲染路径） */
+  const onClarifySubmit = useCallback(
+    async (text: string) => {
+      const t = text.trim();
+      if (!t || !currentSession || busy) return;
+      setBusy(true);
+      const key = `s${++seqRef.current}`;
+      const msg: AgentStreamMsg = {
+        kind: "stream",
+        key,
+        phase: "thinking",
+        shown: "",
+        stageName: "澄清恢复",
+        sources: [],
+        sourcesDetail: [],
+        question: t,
+        feedback: "",
+      };
+      setMessages((prev) => [...prev, { kind: "user", text: `[澄清] ${t}` }, { kind: "stream", data: msg }]);
+      try {
+        const data = await clarifyApi({ clarification: t, session_id: currentSession });
+        msg.phase = "done";
+        msg.shown = data.answer || "";
+        msg.sources = data.sources || [];
+        msg.sourcesDetail = data.sources_detail || [];
+        msg.plan = data.plan;
+        msg.metrics = data.metrics;
+        msg.messageId = data.message_id != null ? String(data.message_id) : undefined;
+        const rows = (data.sources || []).map((s, i) => ({
+          name: String(s),
+          ref: `来源 ${String(i + 1).padStart(2, "0")}`,
+          pct: Math.max(68, 92 - i * 7),
+        }));
+        setSources(rows);
+        setVitals({
+          recall: `${rows.length} 个来源`,
+          time: `${data.metrics?.latency_s ?? "—"}s`,
+          tok: data.metrics?.completion_tokens ? `${data.metrics.completion_tokens} tokens` : "—",
+          web: data.plan?.fallback ? "已触发" : "待命",
+        });
+        /* 恢复后挂起应已清除；若服务端又返回新挂起则继续渲染卡片 */
+        const pc = data.pending_clarification;
+        setClarify(pc && Object.keys(pc).length ? { question: String(pc.question || t), message: String(pc.message || "") } : null);
+      } catch (e) {
+        showToast(`澄清失败：${(e as Error).message}`, true);
+        setClarify(null);
+      } finally {
+        setBusy(false);
+        setTick((t) => t + 1);
+        void refreshSessionsList();
+      }
+    },
+    [busy, currentSession, showToast, refreshSessionsList],
   );
 
   const onStop = useCallback(() => {
@@ -808,6 +871,10 @@ export default function Home() {
           welcomeDocs={{ docCount: kb.docCount, chunks: kb.chunkCount }}
           handlers={handlers}
           streamTick={tick}
+          clarify={clarify}
+          onClarifySubmit={(t) => {
+            if (!busy) void onClarifySubmit(t);
+          }}
           onQuickAsk={(q) => {
             if (!busy) void onSend(q);
           }}

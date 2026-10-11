@@ -1,0 +1,81 @@
+[
+  {
+    "id": "v01",
+    "question": "Agent 的记忆系统有哪些分层？长期记忆应该存什么不应该存什么？请分别展开每一层的设计要点，并结合知识库中不同文章的说法对比取舍。",
+    "expected_keywords": [
+      "工作记忆",
+      "长期记忆",
+      "Mem0",
+      "Letta"
+    ],
+    "expected_files": [
+      "Agent 记忆系统"
+    ],
+    "expected_sections": [
+      "新认知"
+    ]
+  },
+  {
+    "id": "v04",
+    "question": "Claude Agent Skills 的渐进式披露是怎么工作的？请说明它的加载机制与上下文收益，并对比直接把全部文档塞进系统提示的优劣。",
+    "expected_keywords": [
+      "渐进式披露",
+      "元数据",
+      "Tool RAG"
+    ],
+    "expected_files": [
+      "Skill 路由与渐进式披露"
+    ],
+    "expected_sections": [
+      "新认知"
+    ]
+  },
+  {
+    "id": "v09",
+    "question": "多 Agent 协作用什么协议？A2A 和 MCP 是什么关系？请分别说明两者的职责边界，并给出什么时候该选哪个的判断依据。",
+    "expected_keywords": [
+      "A2A",
+      "Agent Card",
+      "纵向",
+      "横向"
+    ],
+    "expected_files": [
+      "多 Agent 编排与通信协议"
+    ],
+    "expected_sections": [
+      "新认知"
+    ]
+  },
+  {
+    "id": "v14",
+    "question": "分块策略和 Embedding 模型哪个对召回影响更大？请结合知识库中的实验或经验说法，分别说明两者影响召回的机制，再给出调优顺序建议。",
+    "expected_keywords": [
+      "分块",
+      "语义分块",
+      "父子",
+      "Embedding"
+    ],
+    "expected_files": [
+      "RAG 分块与 Embedding 选型实践"
+    ],
+    "expected_sections": [
+      "Embedding"
+    ]
+  },
+  {
+    "id": "v05",
+    "question": "RAG 回答效果不好，怎么定位问题在检索侧还是生成侧？请给出系统化的排查步骤，逐项说明每一步对应的典型修复手段，并指出最容易误判的地方。",
+    "expected_keywords": [
+      "RAGAS",
+      "Context Precision",
+      "Context Recall",
+      "Faithfulness"
+    ],
+    "expected_files": [
+      "RAG 评测与召回质量优化"
+    ],
+    "expected_sections": [
+      "新认知"
+    ]
+  }
+]

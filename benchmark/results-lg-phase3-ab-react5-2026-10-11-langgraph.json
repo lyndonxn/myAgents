@@ -1,0 +1,402 @@
+{
+  "generated_at": "2026-10-11 23:41:30",
+  "engine": "myAgents",
+  "summary": {
+    "questions": 5,
+    "threshold": 0.5,
+    "completion_rate": 1.0,
+    "hallucination_rate": 0.0,
+    "avg_latency_s": 14.29,
+    "max_latency_s": 15.53,
+    "p50_latency_s": 14.85,
+    "p95_latency_s": 15.426,
+    "by_category": {
+      "fact": {
+        "count": 5,
+        "avg_score": 0.9417,
+        "pass_rate": 1.0,
+        "p50_latency_s": 14.85,
+        "p95_latency_s": 15.426,
+        "failures": {
+          "keyword_miss": 2
+        }
+      },
+      "refusal_accuracy": null
+    },
+    "total_cost_yuan": 0.02507,
+    "fallback_rate": 0.0,
+    "judge_avg": null
+  },
+  "results": [
+    {
+      "id": "v01",
+      "question": "Agent 的记忆系统有哪些分层？长期记忆应该存什么不应该存什么？请分别展开每一层的设计要点，并结合知识库中不同文章的说法对比取舍。",
+      "answer": "## 一、Agent 记忆系统的分层\n\n知识库中的多篇文章一致给出**三层结构**：工作记忆 → 短期记忆 → 长期记忆 [1][2][3]。\n\n| 记忆层 | 作用 | 类比 | 典型存储 |\n|---|---|---|---|\n| 工作记忆 | 当前任务和单次会话所需上下文 | RAM | 上下文窗口、会话状态 |\n| 短期记忆 | 跨多轮或近期会话的历史信息 | 缓存 | 会话数据库或向量库 |\n| 长期记忆 | 经确认的用户偏好、稳定事实和重要经验 | 持久化存储 | 结构化数据库 + 向量库 |\n\n[3]\n\n整体设计思路是**借鉴操作系统的内存管理**：分层存储、按需加载、淘汰与压缩、优先级管理和一致性检查 [2][3]。\n\n---\n\n## 二、各层设计要点\n\n**1. 工作记忆（当前会话上下文）**\n- 承载当前任务与单次会话所需上下文，类比 RAM，落在上下文窗口与会话状态中 [3]。\n- 上下文过长时的处理手段：摘要压缩、检索式加载、截断；并且明确\"长上下文模型\"**不是**记忆管理的替代品 [2]。\n\n**2. 短期记忆（跨轮 / 近期会话）**\n- 存放跨多轮或近期会话的历史信息，类比缓存，典型落在会话数据库或向量库 [3]。\n- 与产品形态的映射：工作记忆 = 上下文窗口，短期记忆 = 会话库，长期记忆 = Mem0/Letta 这类外部记忆层 [4]。\n\n**3. 长期记忆（确认过的偏好与稳定事实）**\n- 只存**确认过的偏好与稳定事实**（以及重要经验）[1][2][3]。\n- 本质是**带权限与写入门禁的小型 RAG**，检索链路可复用 RAG 全流程 [1][4]。\n- 必须具备：权限、时效、删除和审计机制 [2][3]。\n- 记忆层属于 Harness 中的\"状态与上下文供给\"部分，目标是\"给 Agent 正确、轻量化信息\" [4]。\n\n---\n\n## 三、长期记忆：应该存什么 / 不应该存什么\n\n**应该存：**\n- 经确认的用户偏好 [2][3]\n- 稳定事实 [2][3]\n- 重要经验 [2][3]\n\n**不应该写入长期记忆（写入纪律）：**\n- 未经确认的推断 [2][3]\n- 临时状态 [2][3]\n- 敏感数据 [2][3]\n- 快速过期的信息 [2][3]\n\n此外，长期记忆还需要配套的权限、时效、删除和审计机制 [2][3]。\n\n关于\"写什么\"的决策，知识库中还有一篇从 RL 视角展开的文章，把记忆写入拆成三个可训练决策 [4]：\n\n| 决策 | 动作空间 | 奖励信号 | 难点 |\n|---|---|---|---|\n| 写什么 | 存事实/存偏好/存轨迹摘要/不存 | 未来任务引用该记忆且答对 → +；引用错误记忆 → − | 延迟奖励（跨会话） |\n| 何时写 | 会话中实时 / 会话结束 / 定期批量 | 干扰最小化 vs 新鲜度 | 实时写入打断主任务 |\n| 怎么遗忘 | 保留/衰减/合并/删除 | 旧记忆被引用率 + 冲突率 | 删错的代价不可逆 |\n\n其工程解法是：写入时打\"待验证\"标记 → 未来被引用时回填奖励，相当于 **reward shaping with delayed feedback** [4]。\n\n---\n\n## 四、不同文章的观点对比与取舍\n\n**1. 产品形态之争：三种\"记住\"的定义**\n2026 年记忆已分化为三种产品形态 [1][2]：\n\n| 形态 | 代表 | 核心思路 | 适合 |\n|---|---|---|---|\n| 可插拔记忆层 | Mem0 | 应用通过 API 抽取→存储→检索→删除，Agent 循环由你自己持有 | 已有应用想加记忆，改动小 |\n| 有状态 Agent 运行时 | Letta（原 MemGPT） | 记忆内建在运行时，LLM 通过工具调用**自编辑记忆** | 长期运行的自主 Agent |\n| 图记忆 | Zep + Graphiti、Cognee | 图结构 + 时间感知（bi-temporal），记\"事实在何时为真\" | 关系推理、时效性强的场景 |\n\n关键分歧在于各家**对\"记住\"的定义不同**：存向量片段、存结构化事实，还是存可自管理的对话记忆 [2]。\n\n**2. 选型的第一问：谁拥有 Agent 循环**\n多来源一致结论：**如果 Agent 循环是你自己写的，选 Mem0 这类可插",
+      "plan": {
+        "summary": "分三步检索知识库：先查记忆系统分层与各层设计要点，再查长期记忆存与不存的取舍，最后查不同文章的观点对比，综合后回答。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Agent 记忆系统 分层 短期记忆 长期记忆 设计",
+              "top_k": 6
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "长期记忆 应该存什么 不应该存什么 存储内容取舍",
+              "top_k": 6
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Agent 记忆 不同文章 观点对比 取舍 方案",
+              "top_k": 6
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 快速答案：Agent 记忆系统",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 一、库内已有认知",
+        "我的笔记/面经/Agent与RAG面试题｜基础原理、工程落地与系统架构.md#Agent 与 RAG 面试题｜基础原理、工程落地与系统架构 > 三、系统架构层（Q7-Q8） > Q7. Agent 记忆如何分层管理？",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 三、与库内其他笔记的关联",
+        "AI写入/深入学习/_进度.md#深入学习进度",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 六、参考来源",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 五、延伸思考问题",
+        "AI写入/深入学习/RL for Memory：记忆写入策略的可训练化｜深入学习.md#RL for Memory：记忆写入策略的可训练化｜深入学习 > 一、三个可训练决策与奖励设计",
+        "AI写入/深入学习/记忆库选型实测：Mem0 自建与托管｜深入学习.md#记忆库选型实测：Mem0 自建 vs 托管｜深入学习 > 四、延伸思考问题",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 二、深入后的新认知（2026-08 检索） > 3. 选型的第一问：谁拥有 Agent 循环",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 二、深入后的新认知（2026-08 检索） > 1. 「记忆」在 2026 年已经分化为三种产品形态",
+        "我的笔记/面经/AI Agent 与大模型产品经理面试题.md#AI Agent 与大模型产品经理面试题 > 10. ETH 相关链的基本原理和区别 > 口述版"
+      ],
+      "metrics": {
+        "latency_s": 15.01,
+        "agent_time_s": 15.01,
+        "prompt_tokens": 4246,
+        "completion_tokens": 1024,
+        "cost_yuan": 0.00629,
+        "keyword_hit": 1.0,
+        "source_hit": 1.0,
+        "citations_valid": 39,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 1.0,
+        "failure_type": "",
+        "detail": "通过"
+      },
+      "error": ""
+    },
+    {
+      "id": "v04",
+      "question": "Claude Agent Skills 的渐进式披露是怎么工作的？请说明它的加载机制与上下文收益，并对比直接把全部文档塞进系统提示的优劣。",
+      "answer": "## Claude Agent Skills 的渐进式披露（Progressive Disclosure）工作机制\n\n### 一、核心定位\n\nAnthropic 官方将渐进式披露称为 Agent Skills 的**核心设计原则**，其本质是让 Claude **按需加载信息，而非预先全量加载**，从而使技能具备灵活性和可扩展性 [1]。\n\n### 二、三层加载机制\n\n渐进式披露分为三个层级，按需逐层展开 [1]：\n\n| 层级 | 内容 | 加载时机 | 成本 |\n| --- | --- | --- | --- |\n| 元数据层 | SKILL.md 的 YAML frontmatter（名称 + 描述） | **常驻**上下文 | 每个技能约几十 token |\n| 正文层 | SKILL.md 全文 | 模型判断相关后读取 | 按需 |\n| 引用层 | 技能链接的脚本 / 参考文件 | 执行需要时读取 | 按需 |\n\n**加载流程**可以概括为：技能的名称与描述（元数据）始终驻留在上下文中，作为\"能力目录\"供模型判断；当模型判断某个技能与当前任务相关时，才读取该技能的 SKILL.md 正文；只有当执行确实需要时，才进一步加载脚本或参考文件 [1]。\n\n这一机制被总结为一句口诀：**能力目录常驻、能力全文按需**，即\"索引常驻，内容点播\" [1]。它与 OpenAI 的\"轻量 agent.md 只做索引、按需加载模块文档\"属于同一模式 [1]。\n\n### 三、上下文收益\n\n1. **Token 成本与延迟可控**：常驻上下文的只有元数据（每个技能约几十 token），正文与引用文件按需加载，避免了把全部内容一次性塞入上下文 [1]。\n2. **减少无效上下文**：渐进式披露的直接动机就是减少无效上下文占用 [3]。\n3. **可扩展性**：技能数量增长时，上下文成本不会线性膨胀，因为只有被命中的技能才会展开正文 [1]。\n\n### 四、与\"把全部文档塞进系统提示\"的对比\n\n**直接塞入全部文档的劣势**（以 API 文档为例）[2]：\n1. **占用上下文窗口，增加 Token 成本和延迟**；\n2. 自然语言文档**难以稳定表达必填项、枚举、类型和互斥关系**，不利于模型稳定调用；\n3. 工具/文档数量很多时，缺乏分组、路由或渐进式发现机制，模型难以定位。\n\n**渐进式披露的优势**：通过\"元数据常驻 + 正文按需 + 引用按需\"的分层结构，把常驻成本压到最低，同时保留完整能力 [1]；在工具数量很多时，还可以配合分组、路由或渐进式发现 [2]。\n\n**需要注意的成本背景**：多步 Agent 工作流中，每一步都要为整个前缀重新付费——例如一个 20K token 的系统提示词在 40 步任务里会被全价发送 40 次 [5]。这从反面说明，把大量文档常驻在系统提示中会随步数放大成本，而渐进式披露正是缓解这一问题的设计。\n\n### 五、小结\n\n渐进式披露 = **元数据常驻（索引）+ 正文按需（点播）+ 引用按需（执行时加载）**。相比把全部文档塞进系统提示，它显著降低了常驻 Token 成本与延迟，并提升了技能规模增长下的可扩展性；代价是模型需要先做一次\"相关性判断\"才能读到正文 [1]。\n\n---\n\n### 参考来源\n\n- [1] Skill 路由与渐进式披露｜深入学习 > 二、深入后的新认知 > 1. 渐进式披露已有标杆实现：Claude Agent Skills\n- [2] AI Agent 与大模型产品经理面试题 > 8. 为什么不直接给 Agent 大量 API 文档 > 口述版\n- [3] Skill 路由与渐进式披露｜深入学习 > 三、与库内其他笔记的关联\n- [5] Token 经济学与 AI 产品成本工程｜深入学习 > 二、深入后的新认知 > 2. 多步 Agent 是成本黑洞：一个真实案例\n\n> 说明：片段 [4]（参考来源清单）为文献列表，未提供机制性内容，故未在正文引用。",
+      "plan": {
+        "summary": "先从知识库检索 Claude Agent Skills 渐进式披露的机制与加载流程，再检索其上下文收益，最后检索与全量文档塞入系统提示的优劣对比，综合后作答。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Claude Agent Skills 渐进式披露 progressive disclosure 加载机制",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Agent Skills 上下文窗口 token 收益 按需加载 元数据",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "系统提示塞入全部文档 缺点 对比 Skills 优势",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 二、深入后的新认知（2026-08 检索） > 1. 渐进式披露（progressive disclosure）已有标杆实现：Claude Agent Skills",
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 六、参考来源",
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 三、与库内其他笔记的关联",
+        "AI写入/深入学习/英语长难句阅读：拆解技术文档的方法｜深入学习.md#英语长难句阅读：拆解技术文档的方法 > 一、四步法演示（worked example，句子来自本库读过的 Anthropic 材料）",
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 快速答案：Skill 路由与渐进式披露",
+        "我的笔记/面经/Agent 能力如何从 Skill 走向 Harness Engineering.md#Agent 能力如何从 Skill 走向 Harness Engineering > 七、如何保障 Agent 按需调用工具",
+        "我的笔记/面经/AI Agent 与大模型产品经理面试题.md#AI Agent 与大模型产品经理面试题 > 8. 为什么不直接给 Agent 大量 API 文档 > 口述版",
+        "我的笔记/agent 学习/AI 基础知识串讲.md#AI基础知识串讲 > 内容索引",
+        "AI写入/深入学习/Token 经济学与 AI 产品成本工程｜深入学习.md#Token 经济学与 AI 产品成本工程｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 2. 多步 Agent 是成本黑洞：一个真实案例",
+        "项目/SkillManage 专家模式的实现机制.md#SkillManage 专家模式的实现机制 > 专家模式 > 1. 专家由多个 Skill 组成",
+        "项目/SkillManage 专家模式的实现机制.md#SkillManage 专家模式的实现机制 > 专家模式 > 分类流程",
+        "项目/SkillManage 专家模式的实现机制.md#SkillManage 专家模式的实现机制 > 专家模式 > 当前实现的局限",
+        "项目/SkillManage 专家模式的实现机制.md#SkillManage 专家模式的实现机制 > 专家模式 > 关键词匹配"
+      ],
+      "metrics": {
+        "latency_s": 13.88,
+        "agent_time_s": 13.88,
+        "prompt_tokens": 2483,
+        "completion_tokens": 934,
+        "cost_yuan": 0.00435,
+        "keyword_hit": 0.67,
+        "source_hit": 1.0,
+        "citations_valid": 18,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 0.8333,
+        "failure_type": "keyword_miss",
+        "detail": "来源命中但关键词缺失"
+      },
+      "error": ""
+    },
+    {
+      "id": "v09",
+      "question": "多 Agent 协作用什么协议？A2A 和 MCP 是什么关系？请分别说明两者的职责边界，并给出什么时候该选哪个的判断依据。",
+      "answer": "## 一、多 Agent 协作用什么协议？\n\n多 Agent 协作的主流协议是 **A2A（Agent2Agent）**。它由 Google 于 2025 年开源，目的是让**不同团队、不同框架、不同厂商**的 Agent 之间能够互相发现并委托任务 [2]。其核心机制是：每个 Agent 发布一张 **Agent Card**（能力名片，供其他 Agent 发现），任一 Agent 可同时扮演 client 与 server 角色，任务以**委托方式**流转 [2]。\n\n在 2026 年多协议并存的格局下，学术侧（arXiv 综述）把协议归纳为 MCP / ACP / A2A / ANP 的对比 taxonomy——其中 **MCP 管工具集成，A2A 管代理间协作**，ACP/ANP 覆盖其他场景 [2]。\n\n## 二、A2A 与 MCP 是什么关系？\n\n两者是**互补而非替代**的关系，行业共识可用一句话概括：\n\n> **MCP 连接\"代理 ↔ 工具/数据\"（纵向），A2A 连接\"代理 ↔ 代理\"（横向）。** [1][2]\n\n- **MCP（Model Context Protocol）**：让一个 Agent 接入工具与数据，锚定在同一上下文里 [2]。它是 AI 应用连接外部数据源、工具和工作流的开放协议，通过统一协议降低 M×N 的适配成本，提供 Host、Client、Server 的统一连接模型 [MCP 片段1]。注意 MCP 不等于 Agent 框架，也不直接保证\"任意 LLM 与任意后端零适配\" [MCP 片段1]。\n- **A2A（Agent2Agent）**：让不同来源的 Agent 互相发现和委托任务 [2]。\n\n主流实践是 **Tool Bridge 组合**——即把两者搭配使用 [1]。\n\n## 三、两者的职责边界\n\n| 维度 | MCP | A2A |\n|---|---|---|\n| 连接方向 | 纵向：代理 ↔ 工具/数据 [1][2] | 横向：代理 ↔ 代理 [1][2] |\n| 解决的问题 | 工具集成、数据接入 [2] | 代理间协作、跨系统任务委托 [2] |\n| 核心机制 | Host / Client / Server 统一连接模型 [MCP 片段1] | Agent Card 名片发现 + 任务委托流转 [2] |\n| 适用主体 | 单个 Agent 接入能力 | 不同团队、框架、厂商的 Agent 互操作 [2] |\n\n**子 Agent 的边界划分原则**：按**稳定职责、权限和输入输出契约**划分，避免共享隐式状态 [3]。\n\n## 四、什么时候该选哪个？\n\n**判断依据（工程共识）：**\n\n1. **默认从单 Agent + MCP 起步**。多篇指南给出同一建议：先做\"单 Agent + MCP 工具\"，只有当任务真的需要**跨系统自治协作**时才引入 A2A [1][2]。这与面试题 Q78\"多 Agent 可能是过度设计\"完全一致——**协议是能力，不是目标** [1]。\n\n2. **何时需要 Multi-Agent**：当**角色/上下文明显隔离且需要独立判断**时；否则优先单 Agent + 工具 [3]。\n\n3. **注意区分**：Multi-Agent 是多个独立决策循环，而并行 Tool Calling 是同一 Agent 一次下发多个工具——两者不是一回事 [3]。\n\n**简言之：**\n- 只需让一个 Agent 用上工具和数据 → 选 **MCP**；\n- 需要多个（跨团队/框架/厂商的）Agent 互相发现、委托任务、自治协作 → 引入 **A2A**；\n- 两者通常组合使用（Tool Bridge）[1]。\n\n---\n\n### 参考来源\n\n1. 多 Agent 编排与通信协议｜深入学习 > 快速答案：多 Agent 编排与通信协议\n2. 多 Agent 编排与通信协议｜深入学习 > 二、深入后的新认知（2026-09-02 检索）> 1. 协议格局的共识框架：纵向 vs 横向\n3. Agent 面试题测试用例（100题）> 八、多 Agent 与协作（71–78）\n4. 伪代码：层级式编排 > 3. 工程共识：从单 Agent 起步，自治是\"升(bit)级\"不是起点\n5. AI Agent 与大模型产品经理面试题 > 6. MCP 主要解决什么问题 > 口述版\n\n> 说明：关于\"协调器 Agent 的职责\"\"子 Agent 失败如何恢复\"\"如何防止多 Agent 信息污染\"\"多 Agent 评测指标\"等条目，检索片段中仅列出题号、未给出",
+      "plan": {
+        "summary": "先检索 A2A 与多 Agent 协作协议，再检索 MCP 及其与 A2A 的关系和选型依据，最后综合回答职责边界与选择标准。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "多 Agent 协作协议 A2A Agent2Agent 职责 边界",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "MCP Model Context Protocol 与 A2A 的关系 区别 选型",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "何时引入多 Agent 协作 A2A 选型判断依据 单 Agent MCP 起步 职责边界",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/多 Agent 编排与通信协议｜深入学习.md#多 Agent 编排与通信协议｜深入学习 > 快速答案：多 Agent 编排与通信协议",
+        "AI写入/深入学习/多 Agent 编排与通信协议｜深入学习.md#多 Agent 编排与通信协议｜深入学习 > 二、深入后的新认知（2026-09-02 检索） > 1. 协议格局的共识框架：纵向 vs 横向",
+        "AI写入/Agent面试题测试用例｜100题.md#Agent 面试题测试用例（100题） > 八、多 Agent 与协作（71–78）",
+        "AI写入/深入学习/A2A 任务状态机与跨组织信任模型｜深入学习.md#A2A 任务状态机与跨组织信任模型｜深入学习 > 一、库内已有认知",
+        "AI写入/深入学习/Agent 身份与权限体系设计｜深入学习.md#Agent 身份与权限体系设计｜深入学习 > 三、与库内其他笔记的关联",
+        "我的笔记/面经/AI Agent 与大模型产品经理面试题.md#AI Agent 与大模型产品经理面试题 > 6. MCP 主要解决什么问题 > 口述版",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 六、参考来源",
+        "我的笔记/面经/AI Agent 与大模型产品经理面试题.md#AI Agent 与大模型产品经理面试题 > 快速复习",
+        "我的笔记/agent 学习/AI 基础知识串讲.md#AI基础知识串讲 > 内容索引",
+        "我的笔记/agent 学习/MCP 用统一协议连接模型与外部工具（基础篇）.md#MCP 用统一协议连接模型与外部工具（基础篇）",
+        "AI写入/深入学习/多 Agent 编排与通信协议｜深入学习.md#伪代码：层级式编排 > 3. 工程共识：从单 Agent 起步，自治是\"升(bit)级\"不是起点",
+        "AI写入/深入学习/多 Agent 编排与通信协议｜深入学习.md#多 Agent 编排与通信协议｜深入学习 > 二、深入后的新认知（2026-09-02 检索） > 2. 2026 年的主流动线：不是二选一，而是组合"
+      ],
+      "metrics": {
+        "latency_s": 14.85,
+        "agent_time_s": 14.85,
+        "prompt_tokens": 2443,
+        "completion_tokens": 1024,
+        "cost_yuan": 0.00449,
+        "keyword_hit": 1.0,
+        "source_hit": 1.0,
+        "citations_valid": 23,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 1.0,
+        "failure_type": "",
+        "detail": "通过"
+      },
+      "error": ""
+    },
+    {
+      "id": "v14",
+      "question": "分块策略和 Embedding 模型哪个对召回影响更大？请结合知识库中的实验或经验说法，分别说明两者影响召回的机制，再给出调优顺序建议。",
+      "answer": "## 结论：分块策略的收益通常大于换 Embedding 模型\n\n知识库中的实证结论比较明确：**先调分块，再谈换模型**，顺序反了是常见浪费 [1][2]。\n\n---\n\n### 一、分块策略影响召回的机制\n\n分块通过三个独立、可优化的变量影响召回 [1]：\n\n- **分块大小**：决定单个 chunk 承载的语义完整度；\n- **重叠（overlap）**：缓解切分处语义被截断导致的漏召；\n- **切分方法与层级**：决定语义边界是否被正确保留。\n\n有团队报告，**仅调优分块大小、重叠与层级就带来 10–15% 的召回率提升**，收益超过更换 Embedding 模型 [1][2]。arXiv《Chunk Twice, Embed Once》的系统实验也隔离出：分块大小、重叠、切分方法对召回的影响是**独立的、可优化的变量** [1]。\n\n另外，表格类内容需要**整块保护或父子分块**，否则语义被切碎会直接损害召回 [2]。\n\n### 二、Embedding 模型影响召回的机制\n\nEmbedding 决定 query 与 chunk 在向量空间中的匹配质量，选型主要看两点 [2]：\n\n- **语言匹配**：模型与语料语言是否对齐；\n- **维度成本**：维度带来的存储与计算开销。\n\n但知识库强调，Embedding 的最终效果**要以自己语料的 Recall@K 验收**，不存在通用最优解 [2]。同时，Embedding 模型换代还面临**全库重嵌入的迁移成本与停机方案**问题 [2]——这也是它性价比偏低的原因之一。\n\n### 三、调优顺序建议\n\n知识库给出的性价比顺序是 [1][4]：\n\n> **分块 → 混合检索 → 查询改写 → rerank → 换模型**\n\n即：召回率上不去时，先改分块，最后才考虑换 Embedding 模型。\n\n**验收闭环**：分块的每次改动都用 RAGAS 的 **Context Recall** 指标验收 [1]。当出现「Faithfulness 高 + Context Recall 低」（模型忠实但资料不全）时，应优化检索（扩 top-k、改分块），**不要动模型** [5]。\n\n---\n\n### 参考来源\n\n1. RAG 分块与 Embedding 选型实践｜深入学习 > 二、深入后的新认知 > 1. 反直觉的实证结论：分块策略 > 换 Embedding 模型\n2. RAG 分块与 Embedding 选型实践｜深入学习 > 快速答案：RAG 分块与 Embedding 选型实践\n3. RAG 分块与 Embedding 选型实践｜深入学习 > 三、与库内其他笔记的关联\n4. RAG 分块与 Embedding 选型实践｜深入学习 > 五、延伸思考问题\n5. RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知 > 1. RAGAS 四指标的正交分解",
+      "plan": {
+        "summary": "先分别检索分块策略和 Embedding 模型对召回影响的实验/经验，再检索调优顺序建议，最后综合回答两者机制与优先级。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "分块策略 chunking 对召回率的影响 实验 经验",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Embedding 模型 对召回率的影响 实验 经验",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "RAG 召回优化 调优顺序 分块 Embedding 建议",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 1. 反直觉的实证结论：分块策略 > 换 Embedding 模型",
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 四、暴露的认知盲点",
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 五、延伸思考问题",
+        "AI写入/深入学习/本库分块 A/B 实验设计｜深入学习.md#本库分块 A/B 实验设计｜深入学习 > 二、执行清单（可直接运行）",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 1. RAGAS 四指标的正交分解：故障定位的钥匙",
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 快速答案：RAG 分块与 Embedding 选型实践",
+        "我的笔记/agent 学习/RAG 工作机制详解——一个高质量知识库背后的技术全流程.md#RAG 工作机制详解 > 实践启示",
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 三、与库内其他笔记的关联",
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 六、参考来源"
+      ],
+      "metrics": {
+        "latency_s": 12.18,
+        "agent_time_s": 12.18,
+        "prompt_tokens": 2140,
+        "completion_tokens": 666,
+        "cost_yuan": 0.00347,
+        "keyword_hit": 0.75,
+        "source_hit": 1.0,
+        "citations_valid": 14,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 0.875,
+        "failure_type": "keyword_miss",
+        "detail": "来源命中但关键词缺失"
+      },
+      "error": ""
+    },
+    {
+      "id": "v05",
+      "question": "RAG 回答效果不好，怎么定位问题在检索侧还是生成侧？请给出系统化的排查步骤，逐项说明每一步对应的典型修复手段，并指出最容易误判的地方。",
+      "answer": "# RAG 效果不好：检索侧 vs 生成侧的定位与修复\n\n## 一、核心思路：用 RAGAS 四指标交叉定位\n\nRAGAS 是事实上的标准评测框架，四个指标分两组，**交叉起来就能定位问题出在哪一段** [1]：\n\n| 指标 | 分组 | 测什么 | 低分说明 |\n| --- | --- | --- | --- |\n| **Context Precision** | 检索组 | 召回的 chunk 里有用内容是否排在前面 | 检索排序有问题（该用 rerank） |\n| **Context Recall** | 检索组 | 答案需要的 ground-truth 信息是否都被召回 | 分块/嵌入/查询改写有问题 |\n| **Faithfulness** | 生成组 | 答案是否忠实于召回的上下文 | 生成侧幻觉——模型无视证据 |\n| **Answer Relevancy** | 生成组 | 答案是否切题 | 生成侧偏题——指令或上下文组装问题 |\n\n这个交叉表被称为\"RAG 调优最值钱的一张表\" [1]。\n\n## 二、系统化排查步骤（逐项 + 修复手段）\n\n**第 1 步：跑 RAGAS 四指标，先判断故障落在哪一组** [1][3]\n\n**第 2 步：按低分指标对症修复**\n\n- **Context Recall 低** = 检索没找全 → 改分块、查询改写、扩 top-k [3]。典型组合：Faithfulness 高 + Context Recall 低 → 模型忠实但资料不全 → 优化检索（扩 top-k、改分块），**不要动模型** [1]。\n- **Context Precision 低** = 检索排序有问题 → 该用 rerank [1]。\n- **Faithfulness 低** = 有证据仍编造 → 生成侧：换模型、加引用约束 [3]。典型组合：Faithfulness 低 + Context Precision 高 → 证据就在眼前却编造 → 换模型/加引用约束，**不要改检索** [1]。\n- **Answer Relevancy 低** = 答非所问 → 生成侧：改指令 [3]。\n\n**第 3 步：按性价比顺序优化召回（若确认是检索侧）**\n\n召回质量的三个优化杠杆（按性价比排序）：① **查询改写**——用户原始 query 与文档用词不匹配是召回失败首因（HyDE/多查询改写）；② **混合检索**——向量 + BM25 关键词，兼顾语义与专有名词精确匹配；③ rerank 精排 [3]。面试中可表述为\"分块 → 混合检索 → 查询改写 → rerank → 换模型\"的性价比顺序 [2]。\n\n**第 4 步：走事故复盘闭环**\n\n事故发生 → 三层归因（RAGAS 定位）→ 失败分类（查表，新类型则新增）→ 修复构件（改数据/改检索/改生成/改评测）→ 失败案例写进评测集（回归防护）→ 下次同类事故 = 评测集漏项 [6]。\n\n## 三、最容易误判的地方\n\n1. **把生成侧问题当检索侧改（或反之）**：Faithfulness 低 + Context Precision 高时，证据就在眼前却编造，此时**不要改检索**；反之 Faithfulness 高 + Context Recall 低时**不要动模型** [1]。这是最核心的误判点。\n\n2. **拒答约束带来的指标矛盾**：\"无证据则说不知道\"的拒答约束，会让 Faithfulness 上升但 Answer Relevancy 可能下降——这对矛盾需要权衡 [4][5]。看到 Answer Relevancy 下降时，不要误判为指令问题，可能是拒答约束的副作用。\n\n3. **检索命中但章节/位置不对**：本库 v05 \"RAG 排查\"案例中，文件命中 100% 但章节 0%，根因是长文\"库内已有认知\"前部吸走命中；修复 = 加\"快速答案：RAG 效果不好怎么定位\"节 [5]。说明**文件级命中不等于答案块命中**，只看文件命中率会误判为\"检索没问题\"。\n\n4. **标题/词汇竞争导致的假性召回失败**：v07 案例中，问句\"成本太高怎么降\"与另一篇的\"成本高时你一般有哪些优化思路\"逐字竞争；v22 案例中面经《Harness Engineering》标题强势竞争导致检索 0% [5][6]。这类问题表面像\"检索没找全\"，实为**工具竞争/词汇竞争**，修复方式是加\"快速答案\"节直接命中问句词汇，而非简单扩 top-k",
+      "plan": {
+        "summary": "先从知识库检索 RAG 问题定位与排查的系统化方法，再补充检索评估指标、修复手段和常见误判点，最后综合给出排查步骤与修复建议。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "RAG 检索侧 生成侧 问题定位 排查步骤 修复",
+              "top_k": 8
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "RAG 检索质量评估 召回率 重排序 生成幻觉 误判",
+              "top_k": 8
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "RAGAS Context Precision Context Recall Faithfulness 低分 对应修复手段 分块 重排 提示词 误判",
+              "top_k": 8
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 1. RAGAS 四指标的正交分解：故障定位的钥匙",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 一、库内已有认知",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 快速答案：RAG 效果不好怎么定位？",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 五、延伸思考问题",
+        "项目/MyAgents 检索基线测试（2026-09-04）.md#MyAgents 检索基线测试（2026-09-04） > 基线 → 改进对比",
+        "AI写入/深入学习/RAG 失败案例集：事故复盘方法｜深入学习.md#RAG 失败案例集：事故复盘方法｜深入学习 > 二、复盘方法（事故 → 构件的流程）",
+        "我的笔记/agent 学习/大模型学习题/RAG 面试题.md#RAG 面试题 > 1. 什么是 RAG？它主要解决了什么问题？ > RAG 和微调的关系",
+        "标签索引.md#标签索引 > 现有标签",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 2. 召回质量的三个优化杠杆（按性价比排序）",
+        "我的笔记/面经/AI Agent 与大模型产品经理面试题.md#AI Agent 与大模型产品经理面试题 > 3. 完整介绍 RAG 全链路 > 口述版",
+        "AI写入/深入学习/Rerank 重排序：混合检索与精排｜深入学习.md#Rerank 重排序：混合检索与精排｜深入学习",
+        "我的笔记/面经/Transformer与大模型面试题｜基础原理、训练生成与RAG Agent.md#Transformer 与大模型面试题｜基础原理、训练生成与 RAG Agent > 四、RAG 与 Agent 工程追问 > 3. 向量检索与关键词检索",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 六、参考来源",
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 五、延伸思考问题",
+        "AI写入/深入学习/RAG 分块与 Embedding 选型实践｜深入学习.md#RAG 分块与 Embedding 选型实践｜深入学习 > 三、与库内其他笔记的关联",
+        "AI写入/深入学习/多 Agent 消息压缩：摘要协议｜深入学习.md#多 Agent 消息压缩：摘要协议｜深入学习 > 四、延伸思考问题",
+        "AI写入/深入学习/训练数据去重：MinHash 与语义去重｜深入学习.md#训练数据去重：MinHash 与语义去重｜深入学习 > 二、与库内笔记的关联",
+        "AI写入/深入学习/Rerank 重排序：混合检索与精排｜深入学习.md#Rerank 重排序：混合检索与精排｜深入学习 > 五、延伸思考问题",
+        "AI写入/深入学习/英语长难句阅读：拆解技术文档的方法｜深入学习.md#英语长难句阅读：拆解技术文档的方法 > 一、四步法演示（worked example，句子来自本库读过的 Anthropic 材料）"
+      ],
+      "metrics": {
+        "latency_s": 15.53,
+        "agent_time_s": 15.53,
+        "prompt_tokens": 4419,
+        "completion_tokens": 1024,
+        "cost_yuan": 0.00647,
+        "keyword_hit": 1.0,
+        "source_hit": 1.0,
+        "citations_valid": 19,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 1.0,
+        "failure_type": "",
+        "detail": "通过"
+      },
+      "error": ""
+    }
+  ]
+}

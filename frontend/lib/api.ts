@@ -223,6 +223,32 @@ export async function askStream(
   }
 }
 
+/* ----- 澄清（spec/09 T-010：LangGraph interrupt 恢复）----- */
+
+export interface ClarifyInfo {
+  type?: string;
+  question?: string;
+  message?: string;
+}
+
+/** 提交澄清内容并恢复图执行（/api/clarify）；返回与 /api/ask 同构的答案载荷。 */
+export async function clarify(payload: { clarification: string; session_id?: string }): Promise<
+  AskImageResult & { pending_clarification?: ClarifyInfo }
+> {
+  const res = await fetch("/api/clarify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => ({}))) as AskImageResult & {
+    error?: string;
+    code?: string;
+    pending_clarification?: ClarifyInfo;
+  };
+  if (!res.ok || data.error) throw new Error(data.error || `请求失败（${res.status}）`);
+  return data;
+}
+
 /* ----- 设置（W6-S7）----- */
 
 export interface AppConfig {

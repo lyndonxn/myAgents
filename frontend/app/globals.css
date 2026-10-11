@@ -853,3 +853,15 @@ body{
 /* 右缘骑缝钮收起态：贴边完整可见（向内让位 12px） */
 .edge-right.collapsed{transform:translateX(-12px);}
 .edge-left.collapsed{transform:translateX(12px);}
+
+/* ===== 澄清卡片（spec/09 T-010：LangGraph interrupt 恢复） ===== */
+.clarify-card { padding: 14px 16px; }
+.cl-head { font-weight: 700; font-size: 13px; letter-spacing: .02em; color: var(--blue); margin-bottom: 6px; }
+.cl-q { font-size: 12px; color: var(--mute); margin-bottom: 4px; word-break: break-all; }
+.cl-msg { font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
+.cl-row { display: flex; gap: 8px; }
+.cl-input { flex: 1; border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--ink); background: var(--bg); outline: none; }
+.cl-input:focus { border-color: var(--blue); }
+.cl-btn { border: 1px solid var(--blue-line); background: var(--blue-soft); color: var(--blue); border-radius: 10px; padding: 8px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.cl-btn:hover:not(:disabled) { background: var(--blue); color: #fff; }
+.cl-btn:disabled { opacity: .5; cursor: not-allowed; }

@@ -3,10 +3,15 @@
 /* 聊天区：INTRO / 用户气泡 / 回答卡（统一 agent-stream 模型，三相 thinking→streaming→done）。
  * done 相由 AnswerCard 呈现（W1–W4 全部能力）；S3 打字机与滚动跟随保留。 */
 
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { FeedbackValue, MetricsInfo, PlanInfo, SourceDetail } from "@/lib/api";
 import { esc, stripRefSection } from "@/lib/markdown";
 import AnswerCard, { type AnswerData } from "@/components/AnswerCard";
+
+export interface ClarifyCardInfo {
+  question: string;
+  message: string;
+}
 
 export interface AgentStreamMsg {
   kind: "stream";
@@ -30,7 +35,6 @@ export type MsgVM =
   | { kind: "intro" }
   | { kind: "user"; text: string }
   | { kind: "stream"; data: AgentStreamMsg };
-
 export interface ChatHandlers {
   onCopy: (d: AnswerData) => void;
   onShare: (d: AnswerData) => void;
@@ -48,6 +52,9 @@ export default function Chat(props: {
   streamTick?: number;
   /** 快捷卡片点击 → 直接发送该问题 */
   onQuickAsk: (text: string) => void;
+  /** LangGraph 澄清（spec/09 T-010）：挂起澄清信息，非空时在消息尾部渲染澄清卡片 */
+  clarify?: ClarifyCardInfo | null;
+  onClarifySubmit?: (text: string) => void;
 }) {
   const msgs = props.messages;
   const showWelcome = msgs.length === 1 && msgs[0].kind === "intro";
@@ -138,6 +145,62 @@ export default function Chat(props: {
             );
           return <StreamCard msg={m.data} handlers={props.handlers} key={m.data.key} />;
         })}
+        {props.clarify && (
+          <ClarifyCard
+            info={props.clarify}
+            disabled={false}
+            onSubmit={(t) => props.onClarifySubmit?.(t)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ClarifyCard({
+  info,
+  disabled,
+  onSubmit,
+}: {
+  info: ClarifyCardInfo;
+  disabled: boolean;
+  onSubmit: (text: string) => void;
+}) {
+  const [val, setVal] = useState("");
+  const submit = () => {
+    const t = val.trim();
+    if (!t || disabled) return;
+    setVal("");
+    onSubmit(t);
+  };
+  return (
+    <div className="msg agent">
+      <div className="avatar">M</div>
+      <div className="m-main">
+        <div className="msg-label">
+          <span>MYAGENTS</span>
+          <span className="role-tag">CLARIFY</span>
+        </div>
+        <div className="card clarify-card">
+          <div className="cl-head">需要澄清一下</div>
+          {info.question && <div className="cl-q">上一问：{esc(info.question)}</div>}
+          <div className="cl-msg">{esc(info.message || "请补充你的问题背景，或换个问法。")}</div>
+          <div className="cl-row">
+            <input
+              className="cl-input"
+              value={val}
+              placeholder="补充背景或换个问法…（回车发送）"
+              disabled={disabled}
+              onChange={(e) => setVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+            />
+            <button className="cl-btn" type="button" disabled={disabled || !val.trim()} onClick={submit}>
+              发送澄清
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
