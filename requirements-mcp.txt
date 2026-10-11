@@ -1,0 +1,4 @@
+# MCP vault-mcp（可选依赖，spec/09 T-009）
+# 安装：.venv/bin/pip install -r requirements-mcp.txt
+# 仅 python -m agents.mcp_server 需要；主程序 legacy/langgraph 引擎均无需安装。
+fastmcp>=2.0

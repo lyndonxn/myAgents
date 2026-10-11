@@ -102,3 +102,9 @@ graph:
   checkpoint_db: ""          # Checkpoint SQLite 路径；空 = data_dir/checkpoints.sqlite（会话状态/崩溃恢复）
   clarify_on_miss: false     # 检索零命中时 interrupt 向用户澄清追问（会话式 RAG；经 Answer.pending_clarification 暴露）
 
+# MCP vault-mcp（spec/09 T-009；python -m agents.mcp_server 启动，仅 stdio 本地）
+mcp:
+  decisions_dir: "决策记录"   # 决策/ADR 笔记目录（相对知识库根）
+  digest_log: ""             # log_digestion 唯一白名单写入文件；空 = data_dir/mcp_digestion.jsonl
+
+

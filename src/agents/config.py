@@ -460,6 +460,18 @@ class Config:
         return bool(self.get("graph.clarify_on_miss", False))
 
     @property
+    def mcp_decisions_dir(self) -> str:
+        """vault-mcp 决策记录目录名（spec/09 T-009，相对 kb_path）。"""
+        return str(self.get("mcp.decisions_dir", "决策记录") or "决策记录")
+
+    @property
+    def mcp_digest_log(self) -> Path:
+        """vault-mcp log_digestion 白名单目标文件（C7：唯一允许写入的路径）。"""
+        raw = str(self.get("mcp.digest_log", "") or "")
+        p = Path(raw) if raw else (self.data_dir / "mcp_digestion.jsonl")
+        return p if p.is_absolute() else (PROJECT_ROOT / p)
+
+    @property
     def kb_path(self) -> str:
         return os.path.expanduser(self.get("kb_path", ""))
 
