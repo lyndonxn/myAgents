@@ -3,7 +3,7 @@
 分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**已推送**（2026-09-05 用户授权，`9e6791f..a7489b9 main -> main`，共 41 提交含 W1–W8 与 Next.js 迁移全部工作；推送前已做密钥快扫）。
 规格：`spec/agent-core-modules.md`（S 阶段 + T 阶段）。契约：`AGENTS.md`。
 
-## 进行中：LangGraph 编排升级（2026-10-11 开工，分支 `feat/langgraph-orchestration`）
+## 进行中：LangGraph 编排升级（2026-10-11 开工，**Phase 0-2 全部 DONE 并已合入 main**：`03bd446..0a68bc1` fast-forward，219 测试合并后复验全绿；分支 `feat/langgraph-orchestration` 保留）
 
 计划与全局约束见工作区 harness `~/.zcode/workspace/default/spec/08-langgraph-upgrade-plan.md`（T-006~008）；本仓库侧验收规格 `spec/langgraph-phase0.md`。
 
