@@ -159,6 +159,9 @@ class Answer:
     sources_detail: list[dict] = field(default_factory=list)
     citations_valid: int = 0      # 正文合法 [n] 引用数（S3 引用校验）
     citations_invalid: int = 0    # 已剔除的非法 [n] 引用数
+    # LangGraph 引擎（spec/08 LG-1.3）：图挂起等待澄清时的 interrupt 载荷
+    #（type/question/message）；空 dict = 无挂起。新增字段带默认值，向后兼容。
+    pending_clarification: dict = field(default_factory=dict)
     total_latency_s: float = 0.0
     llm_calls: int = 0
     prompt_tokens: int = 0
@@ -442,7 +445,14 @@ class Agent:
         remember: bool | None = None,
         allow_web: bool | None = None,
         on_stage: "Callable[[str], None] | None" = None,
+        resume: bool = False,
     ) -> Answer:
+        """执行一次问答。
+
+        resume 仅 LangGraph 引擎生效（spec/08 LG-1.4）：忽略 question，对指定
+        session_id 线程的最近 checkpoint 以 invoke(None) 续跑（崩溃恢复）。
+        legacy 引擎接受该参数但不使用（保持签名兼容）。
+        """
         if not self._index_loaded:
             self.load_index()
         self.ensure_llm()
@@ -454,7 +464,7 @@ class Agent:
 
             return run_graph_ask(
                 self, question=question, verbose=verbose, session_id=session_id,
-                remember=remember, allow_web=allow_web, on_stage=on_stage,
+                remember=remember, allow_web=allow_web, on_stage=on_stage, resume=resume,
             )
 
         # G6：标记当前线程的会话上下文，使 tool_call/llm_call 审计事件关联会话

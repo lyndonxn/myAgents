@@ -209,6 +209,7 @@ _BOOL_KEYS: frozenset[str] = frozenset({
     "audit.log_content",
     "planner.fast_path",
     "synthesis.evidence_compression",
+    "graph.clarify_on_miss",
 })
 _NONEMPTY_NO_NUL_KEYS: tuple[str, ...] = ("kb_path", "data_dir")  # 非空且无 NUL
 _URL_KEYS: tuple[str, ...] = ("llm.base_url", "vision.base_url")  # 非空时须 http(s):// 开头
@@ -445,6 +446,18 @@ class Config:
     def engine(self) -> str:
         """编排引擎选择（spec/08 T-006）：legacy=自研链路（默认），langgraph=LangGraph 图编排。"""
         return str(self.get("engine", "legacy") or "legacy").lower()
+
+    @property
+    def graph_checkpoint_db(self) -> Path:
+        """LangGraph Checkpoint SQLite 路径（spec/08 LG-1.1）：空 = data_dir/checkpoints.sqlite。"""
+        raw = str(self.get("graph.checkpoint_db", "") or "")
+        p = Path(raw) if raw else (self.data_dir / "checkpoints.sqlite")
+        return p if p.is_absolute() else (PROJECT_ROOT / p)
+
+    @property
+    def graph_clarify_on_miss(self) -> bool:
+        """检索零命中时是否 interrupt 澄清追问（spec/08 LG-1.3，默认关闭保持旧行为）。"""
+        return bool(self.get("graph.clarify_on_miss", False))
 
     @property
     def kb_path(self) -> str:

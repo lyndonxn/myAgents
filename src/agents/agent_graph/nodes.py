@@ -1,6 +1,7 @@
-"""主图节点（spec/08 LG-0.4/0.5）：入口路由、合成、引用校验、统一错误出口。
+"""主图节点（spec/08 LG-0.4/0.5 + LG-1.2/1.3/1.5）：入口路由、澄清中断、合成、引用校验、轮次提交。
 
 复用边界（薄封装，零提示词复制）：
+- 追问改写复用 planner.rewrite_query（其自带 LLMError fail-soft，返回原查询）；
 - 合成走 Agent._synthesize（证据压缩/Prefix Caching 友好 prompt 全部继承）；
 - 检索步骤输出构造复用 tools._fmt_hit / _hit_detail，与 legacy 工具输出同构，
   使 _collect_source_info / 前端证据卡无需任何改动；
@@ -8,6 +9,8 @@
 
 错误处理遵循 C5：节点失败写 error 字段并停止推进（下游见 error 透传），
 主图条件边将其路由到 error_node —— 不复刻参考项目"置 error 后继续走"的反模式。
+澄清中断遵循 LG-1.3：检索零命中（可配）时 interrupt() 暂停等待用户补充，
+经 Command(resume={"clarified_query": …}) 恢复后重跑检索；澄清轮数上限 1，防循环。
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ from ..agent import _emit_stage
 from ..citations import validate_citations
 from ..executor import StepResult
 from ..logger import get_logger
-from ..planner import Plan, PlanStep
+from ..planner import Plan, PlanStep, rewrite_query
 from ..tools import _fmt_hit, _hit_detail
 
 LOG = get_logger("agent_graph")
@@ -30,6 +33,13 @@ _KB_MISS_HINT = (
     "请按系统规则回答：开头明确「未在知识库内找到相关内容」，"
     "并询问用户是否需要联网搜索——回复「联网搜索」即可。不要编造、不要硬凑答案。）"
 )
+
+_CLARIFY_MESSAGE = "知识库中没有检索到与问题直接相关的内容。请补充背景或换个问法（也可以直接跳过，按「未在知识库内」作答）。"
+
+
+def format_history(history: list[dict]) -> str:
+    """把会话历史拼装为文本（改写与合成共用同一口径）。"""
+    return "\n".join(f"用户：{t.get('q', '')}\n助手：{t.get('a', '')}" for t in history)
 
 
 def timed(name: str, fn):
@@ -50,17 +60,80 @@ def timed(name: str, fn):
 
 # ---------------- 主图节点 ----------------
 
-def make_route_entry(on_stage=None):
-    """入口节点：问题规范化 + 空问题拦截（错误走 error_node，不进检索）。"""
+def make_route_entry(agent, on_stage=None):
+    """入口节点：问题规范化 + 会话历史追问改写（LG-1.5，复用 planner.rewrite_query）。"""
 
     def route_entry(state):
         question = (state.get("question") or "").strip()
         if not question:
             return {"error": "问题为空，无法执行问答"}
         _emit_stage(on_stage, "检索知识库")
-        return {"question": question}
+        history = state.get("history") or []
+        history_text = format_history(history)
+        search_query = question
+        llm_calls = 0
+        if history_text:
+            rewritten = rewrite_query(agent.llm, question, history_text)
+            if rewritten and rewritten != question:
+                search_query = rewritten
+                llm_calls = 1
+        return {"question": question, "search_query": search_query, "history_text": history_text, "llm_call_count": llm_calls}
 
     return route_entry
+
+
+def make_clarify_node(agent):
+    """澄清中断节点（LG-1.3）：检索零命中（graph.clarify_on_miss）时 interrupt 等待用户补充。
+
+    恢复语义：Command(resume={"clarified_query": …})（或纯字符串）→ 以澄清文本重跑检索；
+    用户跳过（空恢复值）或澄清一轮仍未命中 → 按未命中口径进入合成（miss_hint）。
+    """
+
+    def clarify_check(state):
+        if state.get("error"):
+            return {"pending_requery": False}
+        if state.get("chunks"):
+            return {"pending_requery": False}
+        if not agent.config.graph_clarify_on_miss:
+            return {"pending_requery": False}
+        if state.get("clarify_round", 0) >= 1:
+            LOG.info("澄清一轮后仍未命中，按未命中口径继续合成")
+            return {"pending_requery": False}
+        from langgraph.types import interrupt
+
+        user = interrupt({
+            "type": "clarify",
+            "question": state.get("question", ""),
+            "message": _CLARIFY_MESSAGE,
+        })
+        clarified = ""
+        if isinstance(user, dict):
+            clarified = str(user.get("clarified_query", "") or "").strip()
+        elif isinstance(user, str):
+            clarified = user.strip()
+        if not clarified:
+            LOG.info("用户跳过澄清，按未命中口径继续合成")
+            return {"pending_requery": False}
+        LOG.info("澄清恢复，改用新查询重跑检索: %s", clarified[:50])
+        return {
+            "pending_requery": True,
+            "clarify_round": 1,
+            # 澄清文本同时接管 question：合成与 history 记录以澄清后的真实意图为准
+            "question": clarified,
+            "search_query": clarified,
+            "chunks": [],
+            "candidates": [],
+            "fused": {},
+            "vec_hits": [],
+            "kw_hits": [],
+        }
+
+    return clarify_check
+
+
+def route_clarify(state) -> str:
+    """澄清路由：待重查 → 回检索子图；否则进入合成。"""
+    return "retrieve" if state.get("pending_requery") else "generate"
 
 
 def make_generate_node(agent, on_stage=None):
@@ -73,7 +146,8 @@ def make_generate_node(agent, on_stage=None):
         try:
             chunks = state.get("chunks") or []
             question = state.get("question", "")
-            lines = [f"针对「{question}」检索到 {len(chunks)} 条相关片段："]
+            search_query = state.get("search_query") or question
+            lines = [f"针对「{search_query}」检索到 {len(chunks)} 条相关片段："]
             sources: list[str] = []
             sources_detail: list[dict] = []
             for rank, hit in enumerate(chunks, start=1):
@@ -91,18 +165,22 @@ def make_generate_node(agent, on_stage=None):
             step = StepResult(
                 step_id=1,
                 action="search_knowledge_base",
-                input={"query": question},
+                input={"query": search_query},
                 output=output,
                 ok=True,
             )
             plan = Plan(
-                reasoning="LangGraph 图编排（Phase 0）：单步检索→合成→引用校验",
-                plan_summary="LangGraph：检索→生成→引用校验",
-                steps=[PlanStep(action="search_knowledge_base", input={"query": question}, step_id=1)],
+                reasoning="LangGraph 图编排：单步检索→合成→引用校验",
+                plan_summary="LangGraph：检索→（澄清）→生成→引用校验",
+                steps=[PlanStep(action="search_knowledge_base", input={"query": search_query}, step_id=1)],
             )
-            # 知识库零命中提示与 legacy ask 口径一致（联网决策属 Phase 1 会话编排）
+            # 知识库零命中提示与 legacy ask 口径一致；澄清被跳过/未命中时同样生效
             hint = _KB_MISS_HINT if not chunks else ""
-            draft = agent._synthesize(question, plan, [step], history_text="", extra_hint=hint)
+            draft = agent._synthesize(
+                question, plan, [step],
+                history_text=state.get("history_text", ""),
+                extra_hint=hint,
+            )
             return {
                 "draft": draft,
                 "sources": sources,
@@ -141,6 +219,21 @@ def make_validate_node(agent):
     return validate_citations_node
 
 
+def commit_turn(state):
+    """轮次提交节点（LG-1.2）：成功轮次写入 state["history"]，随 Checkpointer 持久化。
+
+    不双写 legacy SessionMemory——图引擎的会话状态以 checkpoint 为唯一载体。
+    """
+    if state.get("error"):
+        return {}
+    answer_text = state.get("draft", "")
+    if not answer_text:
+        return {}
+    history = list(state.get("history") or [])
+    history.append({"q": state.get("question", ""), "a": answer_text})
+    return {"history": history}
+
+
 def error_node(state):
     """统一错误出口（C5 终点）：draft 置空，避免半截产物流向调用方。"""
     err = state.get("error") or "未知错误"
@@ -160,5 +253,5 @@ def route_ok_or_error(next_node: str):
 
 
 def route_finish(state) -> str:
-    """末节点路由：校验通过 → 结束；有 error → error_node。"""
-    return "__end__" if not state.get("error") else "error_node"
+    """末节点路由：校验通过 → 提交轮次；有 error → error_node。"""
+    return "commit_turn" if not state.get("error") else "error_node"

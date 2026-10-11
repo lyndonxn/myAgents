@@ -51,7 +51,7 @@ def build_retrieval_subgraph(retriever: Retriever):
         try:
             top_k = state.get("top_k") or retriever.config.top_k
             candidates = retriever._candidate_count(top_k)
-            query = state["question"]
+            query = state.get("search_query") or state["question"]
             # 与 _hybrid_leaf_scores 相同的查询向量化口径
             qvec = retriever.embed_backend.embed_query(query) if retriever.embed_backend is not None else query
             return {"vec_hits": retriever.store.search(qvec, candidates)}
@@ -64,7 +64,8 @@ def build_retrieval_subgraph(retriever: Retriever):
         try:
             top_k = state.get("top_k") or retriever.config.top_k
             candidates = retriever._candidate_count(top_k)
-            return {"kw_hits": retriever.bm25.search(state["question"], candidates)}
+            query = state.get("search_query") or state["question"]
+            return {"kw_hits": retriever.bm25.search(query, candidates)}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"bm25_recall: {type(exc).__name__}: {exc}"}
 
@@ -94,7 +95,8 @@ def build_retrieval_subgraph(retriever: Retriever):
             return {}
         try:
             top_k = state.get("top_k") or retriever.config.top_k
-            candidates = retriever._rerank_parents(state["question"], state.get("candidates") or [], top_k)
+            query = state.get("search_query") or state["question"]
+            candidates = retriever._rerank_parents(query, state.get("candidates") or [], top_k)
             return {"chunks": _build_chunks(retriever, candidates, top_k)}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"rerank: {type(exc).__name__}: {exc}"}

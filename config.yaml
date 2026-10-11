@@ -96,3 +96,9 @@ tasks:
 synthesis:
   max_tokens: 1024           # 合成最大输出 token（从全局 max_tokens 收紧，降低成本与延迟）
   evidence_compression: true # 句子级证据压缩：按查询相关性裁剪送入合成的片段文本（目标输入 token 降 ≥30%）
+
+# LangGraph 图编排（spec/08 Phase 1；仅 engine: langgraph 时生效）
+graph:
+  checkpoint_db: ""          # Checkpoint SQLite 路径；空 = data_dir/checkpoints.sqlite（会话状态/崩溃恢复）
+  clarify_on_miss: false     # 检索零命中时 interrupt 向用户澄清追问（会话式 RAG；经 Answer.pending_clarification 暴露）
+

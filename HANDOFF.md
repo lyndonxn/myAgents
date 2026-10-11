@@ -15,7 +15,16 @@
 - 测试：`tests/test_agent_graph.py` 10 项全离线（FakeLLM）；全套 **207 绿**（基线 197 + 10）。评测基线快照：`benchmark/results-lg-phase0-baseline-2026-10-11.txt`（vault 26 题 retrieval-only：文件命中 96.2%/章节 80.8%，BGE 本地向量 + Cross-Encoder 精排口径——venv 已装 sentence-transformers）。
 - 独立验收遗留（非阻塞）：`_build_chunks` 与 `retrieve()` 的 10 行结果组装循环轻度重复（打包代码，非检索逻辑）；~~真实 LLM 端到端未跑~~ **真实 LLM 冒烟已通过（2026-10-11 19:11，用户本人在 Web UI 发起）：`ask[langgraph] q=什么是 harness 4.8s ¥0.0013 ok`，vault 索引（295 父块/636 叶子）+ DeepSeek 云端全链路走通**。运行期发现（既有环境问题，非本切片引入）：本机 `bge-reranker-base` 模型文件缺失 → Cross-Encoder 精排优雅降级为无精排（legacy 同口径）。
 
-**Phase 1（T-007）未开始**：SqliteSaver checkpointer + interrupt 澄清 + 崩溃恢复。下一步动作：读 spec/08 §5，先做 AsyncSqliteSaver 接入与会话映射。
+**Phase 1 已完成（2026-10-11，LG-ACC-004/005/006 全绿，待独立验收）**——规格 `spec/langgraph-phase1.md`：
+
+- `graph.checkpoint_db`（默认 data_dir/checkpoints.sqlite）+ `graph.clarify_on_miss`（默认 false）配置；同步 `SqliteSaver`（langgraph-checkpoint-sqlite 3.1.1；spec 原文 Async——同步契约按接缝调整，偏差已登记）。
+- 会话续接：session_id → thread_id，`history` 存 checkpoint（**不双写 legacy SessionMemory**）；追问改写复用 `planner.rewrite_query`（LG-1.2/1.5）；跨实例续接测试通过（新实例改写提示词可见上轮历史）。
+- interrupt 澄清（LG-1.3）：检索零命中（clarify_on_miss 开启）→ `interrupt()` 挂起 → `Answer.pending_clarification` 暴露（新增字段带默认值，向后兼容）；同会话下一问自动经 `Command(resume)` 注回图作为澄清内容；澄清轮数上限 1；跳过则按 miss_hint 口径合成。
+- 崩溃恢复（LG-1.4）：`Agent.ask("", resume=True, session_id=…)` → `invoke(None)` 从最近 checkpoint 续跑；子进程 `os._exit(9)` 演练证实**合成一次、检索零重跑**。
+- 测试：`tests/test_agent_graph_session.py` 7 项 + 全套 **214 绿**（207+7）。独立验收子代理复核 **4/4 pass**（含对抗性防循环推演、checkpoint 粒度反序列化核查、不双写代码级确认）；其发现两项已修复：澄清恢复后合成/历史改用澄清后意图（原仅作 search_query）、resume 无线程时中文可读报错。
+- 边界（如实声明）：澄清的专用 Web 端点未做（经 pending_clarification + "下一问即澄清"语义可用）；checkpoint 仅 session_id/resume 时启用；澄清触发口径=真零命中（与 legacy _kb_miss 同源，分数阈值待 Phase 2 定）；checkpoint serde 依赖 pickle 兜底（langgraph 已警告未来版本将阻止——升级 langgraph 前必须复核，见偏差 5）；sqlite 连接无关闭钩子 + 每次 ask 重建编译图（单用户本地可接受）。
+
+**Phase 2（T-008）未开始**：astream_events 流式 + 节点指标接 benchmark + 双引擎 A/B（付费评测前触发决策点 D2）。
 
 
 ## 第一期 S1–S5（五大核心模块补全，已验收）
