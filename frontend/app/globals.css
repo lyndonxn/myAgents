@@ -873,3 +873,9 @@ body{
 .md-table th, .md-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .md-table tbody tr:last-child td { border-bottom: none; }
 .md-table tbody tr:hover td { background: var(--bg); }
+
+/* ===== 渲染器升级新增元素（2026-10-12） ===== */
+.md-ol { margin: 8px 0; padding-left: 24px; }
+.md-ol li { margin: 3px 0; }
+.md-quote { margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--blue); background: var(--blue-soft); border-radius: 0 10px 10px 0; color: var(--ink-2); }
+.card hr, .block hr { border: none; border-top: 1px solid var(--line-2); margin: 14px 0; }
