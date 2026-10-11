@@ -13,7 +13,7 @@
 - 新增 `src/agents/agent_graph/`：state（GraphState，node_metrics 带 operator.add reducer）/ 检索子图（向量+BM25 **并行扇出**→融合→父块→精排，全部委托 Retriever 既有方法）/ 主图节点（复用 `_synthesize`、`tools._fmt_hit/_hit_detail`、`citations.validate_citations`）/ 条件边错误路由 error_node（C5）/ lazy 导出。
 - 可选依赖：`requirements-langgraph.txt`（langgraph 1.2.14 / langchain-core 1.6.9 / langchain-openai 1.7.0 已入本机 venv）；`requirements.txt` 仅加注释——保持"轻依赖"硬约束精神（用户指令豁免记录在案）。
 - 测试：`tests/test_agent_graph.py` 10 项全离线（FakeLLM）；全套 **207 绿**（基线 197 + 10）。评测基线快照：`benchmark/results-lg-phase0-baseline-2026-10-11.txt`（vault 26 题 retrieval-only：文件命中 96.2%/章节 80.8%，BGE 本地向量 + Cross-Encoder 精排口径——venv 已装 sentence-transformers）。
-- 独立验收遗留（非阻塞）：`_build_chunks` 与 `retrieve()` 的 10 行结果组装循环轻度重复（打包代码，非检索逻辑）；真实 LLM 端到端未跑（付费 C1/D2 待授权）。
+- 独立验收遗留（非阻塞）：`_build_chunks` 与 `retrieve()` 的 10 行结果组装循环轻度重复（打包代码，非检索逻辑）；~~真实 LLM 端到端未跑~~ **真实 LLM 冒烟已通过（2026-10-11 19:11，用户本人在 Web UI 发起）：`ask[langgraph] q=什么是 harness 4.8s ¥0.0013 ok`，vault 索引（295 父块/636 叶子）+ DeepSeek 云端全链路走通**。运行期发现（既有环境问题，非本切片引入）：本机 `bge-reranker-base` 模型文件缺失 → Cross-Encoder 精排优雅降级为无精排（legacy 同口径）。
 
 **Phase 1（T-007）未开始**：SqliteSaver checkpointer + interrupt 澄清 + 崩溃恢复。下一步动作：读 spec/08 §5，先做 AsyncSqliteSaver 接入与会话映射。
 
