@@ -1,0 +1,6 @@
+# LangGraph 编排引擎（可选依赖，spec/08 T-006）
+# 安装：.venv/bin/pip install -r requirements-langgraph.txt
+# 仅 config.yaml 设置 engine: langgraph 时需要；默认 legacy 引擎零新增依赖。
+langgraph>=1.0.7
+langchain-core>=1.0
+langchain-openai>=1.0

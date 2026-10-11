@@ -3,6 +3,21 @@
 分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**已推送**（2026-09-05 用户授权，`9e6791f..a7489b9 main -> main`，共 41 提交含 W1–W8 与 Next.js 迁移全部工作；推送前已做密钥快扫）。
 规格：`spec/agent-core-modules.md`（S 阶段 + T 阶段）。契约：`AGENTS.md`。
 
+## 进行中：LangGraph 编排升级（2026-10-11 开工，分支 `feat/langgraph-orchestration`）
+
+计划与全局约束见工作区 harness `~/.zcode/workspace/default/spec/08-langgraph-upgrade-plan.md`（T-006~008）；本仓库侧验收规格 `spec/langgraph-phase0.md`。
+
+**Phase 0 已完成（LG-ACC-001/002/003 + C5 全 pass，独立验收子代理复核）**：
+
+- `config.yaml` 新增 `engine: legacy | langgraph`（默认 legacy；`validate_config` 枚举校验）；`Agent.ask()` 顶部单点分派（engine=langgraph 才进图引擎，legacy 零改动）。
+- 新增 `src/agents/agent_graph/`：state（GraphState，node_metrics 带 operator.add reducer）/ 检索子图（向量+BM25 **并行扇出**→融合→父块→精排，全部委托 Retriever 既有方法）/ 主图节点（复用 `_synthesize`、`tools._fmt_hit/_hit_detail`、`citations.validate_citations`）/ 条件边错误路由 error_node（C5）/ lazy 导出。
+- 可选依赖：`requirements-langgraph.txt`（langgraph 1.2.14 / langchain-core 1.6.9 / langchain-openai 1.7.0 已入本机 venv）；`requirements.txt` 仅加注释——保持"轻依赖"硬约束精神（用户指令豁免记录在案）。
+- 测试：`tests/test_agent_graph.py` 10 项全离线（FakeLLM）；全套 **207 绿**（基线 197 + 10）。评测基线快照：`benchmark/results-lg-phase0-baseline-2026-10-11.txt`（vault 26 题 retrieval-only：文件命中 96.2%/章节 80.8%，TF-IDF 后端口径）。
+- 独立验收遗留（非阻塞）：`_build_chunks` 与 `retrieve()` 的 10 行结果组装循环轻度重复（打包代码，非检索逻辑）；真实 LLM 端到端未跑（付费 C1/D2 待授权）。
+
+**Phase 1（T-007）未开始**：SqliteSaver checkpointer + interrupt 澄清 + 崩溃恢复。下一步动作：读 spec/08 §5，先做 AsyncSqliteSaver 接入与会话映射。
+
+
 ## 第一期 S1–S5（五大核心模块补全，已验收）
 
 | 切片 | 内容 | 提交 |

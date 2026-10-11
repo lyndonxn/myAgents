@@ -447,6 +447,16 @@ class Agent:
             self.load_index()
         self.ensure_llm()
 
+        # LangGraph 编排引擎（spec/08 T-006，LG-0.6）：engine=langgraph 时单点分派到图引擎；
+        # 默认 legacy 完全走原链路，本改动不触碰任何既有行为（向后兼容硬约束 3）。
+        if self.config.engine == "langgraph":
+            from .agent_graph.runner import run_graph_ask
+
+            return run_graph_ask(
+                self, question=question, verbose=verbose, session_id=session_id,
+                remember=remember, allow_web=allow_web, on_stage=on_stage,
+            )
+
         # G6：标记当前线程的会话上下文，使 tool_call/llm_call 审计事件关联会话
         audit_mod.set_current_session(session_id)
         # G3：本次问答的联网许可与工具视图（remember/allow_web 缺省 None → 按配置）

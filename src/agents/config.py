@@ -188,6 +188,7 @@ _ENUM_CHOICES: dict[str, tuple[str, ...]] = {
     "embedding.backend": ("auto", "local", "tfidf"),
     "memory.embedding_backend": ("auto", "local", "tfidf"),
     "llm.mode": ("cloud", "local"),  # G11：离线档位（local=本地 OpenAI 兼容端点）
+    "engine": ("legacy", "langgraph"),  # spec/08：编排引擎（T-006 LangGraph 图编排）
 }
 _BOOL_STR_TRUE = frozenset({"true", "1", "yes"})
 _BOOL_STR_FALSE = frozenset({"false", "0", "no"})
@@ -440,6 +441,11 @@ class Config:
         return node
 
     # ---- 便捷属性 ----
+    @property
+    def engine(self) -> str:
+        """编排引擎选择（spec/08 T-006）：legacy=自研链路（默认），langgraph=LangGraph 图编排。"""
+        return str(self.get("engine", "legacy") or "legacy").lower()
+
     @property
     def kb_path(self) -> str:
         return os.path.expanduser(self.get("kb_path", ""))
