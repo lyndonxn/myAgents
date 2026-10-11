@@ -1,0 +1,10 @@
+[rerank] Cross-Encoder 不可用（OSError: BAAI/bge-reranker-base does not appear to have a file named pytorch_model.bin or model.safetensors.），检索将无精排
+[index] 父块 2300 / 叶子 8757 | backend=local dim=512 | 上下文增强=0 | 18.0s
+[v01] kw=100% src=100% halluc=0% done=是 3.8s cost=¥0.0025 | Agent 的记忆系统有哪些分层？长期记忆应该存什么不应该存什么？
+[v02] kw=100% src=100% halluc=0% done=是 3.4s cost=¥0.0016 | MCP 有哪些安全攻击类型？
+[v03] kw=100% src=100% halluc=0% done=是 3.8s cost=¥0.0027 | 上下文窗口快满时有哪些压缩策略？
+[v04] kw=67% src=100% halluc=0% done=是 3.5s cost=¥0.0018 | Claude Agent Skills 的渐进式披露是怎么工作的？
+[v05] kw=100% src=100% halluc=0% done=是 4.4s cost=¥0.0027 | RAG 回答效果不好，怎么定位问题在检索侧还是生成侧？
+
+结果已写入 /Users/mima1234/Documents/myAgents/benchmark/results.json
+汇总表已写入 /Users/mima1234/Documents/myAgents/benchmark/results.md

@@ -1,0 +1,379 @@
+{
+  "generated_at": "2026-10-11 21:21:35",
+  "engine": "myAgents",
+  "summary": {
+    "questions": 5,
+    "threshold": 0.5,
+    "completion_rate": 1.0,
+    "hallucination_rate": 0.0,
+    "avg_latency_s": 13.33,
+    "max_latency_s": 16.23,
+    "p50_latency_s": 12.71,
+    "p95_latency_s": 16.032,
+    "by_category": {
+      "fact": {
+        "count": 5,
+        "avg_score": 0.9667,
+        "pass_rate": 1.0,
+        "p50_latency_s": 12.71,
+        "p95_latency_s": 16.032,
+        "failures": {
+          "keyword_miss": 1
+        }
+      },
+      "refusal_accuracy": null
+    },
+    "total_cost_yuan": 0.02448,
+    "fallback_rate": 0.0,
+    "judge_avg": null
+  },
+  "results": [
+    {
+      "id": "v01",
+      "question": "Agent 的记忆系统有哪些分层？长期记忆应该存什么不应该存什么？",
+      "answer": "## 一、Agent 记忆系统的分层\n\nAgent 记忆分为**三层**：工作记忆 → 短期记忆 → 长期记忆 [1][3]。\n\n| 记忆层 | 作用 | 类比 | 典型存储 |\n|---|---|---|---|\n| 工作记忆 | 当前任务和单次会话所需上下文 | RAM | 上下文窗口、会话状态 |\n| 短期记忆 | 跨多轮或近期会话的历史信息 | 缓存 | 会话数据库或向量库 |\n| 长期记忆 | 经确认的用户偏好、稳定事实和重要经验 | 持久化存储 | 结构化数据库 + 向量库 |\n\n[2]\n\n这套分层可借鉴操作系统的内存管理思路：**分层存储、按需加载、淘汰与压缩、优先级管理和一致性检查** [2][3]。\n\n与产品形态的映射关系：工作记忆 = 上下文窗口，短期记忆 = 会话库，长期记忆 = Mem0/Letta 这类外部记忆层 [4]。长期记忆的检索侧本质上是**一个带权限、时效与写入门禁的小型 RAG** [1][4]。\n\n## 二、长期记忆应该存什么\n\n长期记忆只存**确认过的偏好与稳定事实**，具体包括 [1][2][3]：\n\n- 经确认的用户偏好\n- 稳定事实\n- 重要经验\n\n从写入决策角度看，\"写什么\"的动作空间为：**存事实 / 存偏好 / 存轨迹摘要 / 不存** [4]。\n\n## 三、长期记忆不应该存什么\n\n以下内容**不应直接写入长期记忆** [2][3]：\n\n- 未经确认的推断\n- 临时状态\n- 敏感数据\n- 快速过期的信息\n\n此外，长期记忆还需要配套的**权限、时效、删除和审计机制** [2][3]。\n\n## 四、补充：写入与遗忘的工程视角\n\n- **何时写**：会话中实时 / 会话结束 / 定期批量，需权衡\"干扰最小化（不打断）\"与\"新鲜度\" [4]。\n- **怎么遗忘**：保留 / 衰减 / 合并 / 删除，难点在于\"删错的代价不可逆\" [4]。\n- **延迟奖励的工程解法**：写入时打\"待验证\"标记 → 未来被引用时回填奖励 [4]。\n- 上下文过长的处理方式是摘要压缩、检索式加载、截断，且\"长上下文模型\"不是记忆管理的替代品 [3]。\n\n---\n\n### 参考来源\n\n1. Agent 记忆系统｜深入学习 > 快速答案：Agent 记忆系统\n2. Agent 与 RAG 面试题｜基础原理、工程落地与系统架构 > 三、系统架构层（Q7-Q8）> Q7. Agent 记忆如何分层管理？\n3. Agent 记忆系统｜深入学习 > 一、库内已有认知\n4. RL for Memory：记忆写入策略的可训练化｜深入学习 > 一、三个可训练决策与奖励设计\n5. Agent 记忆系统｜深入学习 > 三、与库内其他笔记的关联",
+      "plan": {
+        "summary": "先从知识库检索 Agent 记忆系统的分层架构，再检索长期记忆应存与不应存的内容原则，最后综合两段结果回答。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Agent 记忆系统 分层 短期记忆 长期记忆 架构",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "长期记忆 应该存什么 不应该存什么 存储内容 原则",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "长期记忆 写入原则 不该存 临时信息 敏感数据 过期信息 门禁",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 快速答案：Agent 记忆系统",
+        "我的笔记/面经/Agent与RAG面试题｜基础原理、工程落地与系统架构.md#Agent 与 RAG 面试题｜基础原理、工程落地与系统架构 > 三、系统架构层（Q7-Q8） > Q7. Agent 记忆如何分层管理？",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 一、库内已有认知",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 三、与库内其他笔记的关联",
+        "AI写入/深入学习/_进度.md#深入学习进度",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 五、延伸思考问题",
+        "AI写入/深入学习/RL for Memory：记忆写入策略的可训练化｜深入学习.md#RL for Memory：记忆写入策略的可训练化｜深入学习 > 一、三个可训练决策与奖励设计",
+        "AI写入/Agent面试题测试用例｜100题.md#Agent 面试题测试用例（100题） > 二、ReAct、规划与记忆（11–20）",
+        "AI写入/深入学习/Context Engineering 与上下文压缩策略｜深入学习.md#伪代码：阈值触发的压缩循环 > 三、与库内其他笔记的关联"
+      ],
+      "metrics": {
+        "latency_s": 10.03,
+        "agent_time_s": 10.03,
+        "prompt_tokens": 3525,
+        "completion_tokens": 653,
+        "cost_yuan": 0.00483,
+        "keyword_hit": 1.0,
+        "source_hit": 1.0,
+        "citations_valid": 20,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 1.0,
+        "failure_type": "",
+        "detail": "通过"
+      },
+      "error": ""
+    },
+    {
+      "id": "v02",
+      "question": "MCP 有哪些安全攻击类型？",
+      "answer": "## MCP 的主要安全攻击类型\n\n根据知识库，MCP 的威胁模型可归纳为**三大类攻击**（2026 年行业共识）[1][4]：\n\n### ① 工具投毒（Tool Poisoning）——最流行的一类\n- **攻击原理**：恶意指令藏在**工具描述/元数据**里。工具描述会被注入模型上下文，模型把描述当可信资料读——**攻击面不在工具执行，而在工具的\"说明书\"**[1]。\n- **量化数据**：Practical DevSecOps 对公开渠道 1899 个 MCP Server 的分析显示，**约 5.5% 存在工具投毒**；客户端通常只在安装时审查一次、缓存工具列表，因此\"常驻的描述既是效率优化，也是持久攻击面\"[1]。\n- **已有 CVE 编号**：CVE-2025-54136 [1]。\n\n### ② Rug Pull（拉地毯）\n- **攻击原理**：工具**通过审查后，在运行时更换行为**——即审查时是良性的，运行中悄悄变脸 [4]。\n\n### ③ 混淆代理人（Confused Deputy）\n- **攻击原理**：MCP Server/Agent 拿着**合法但权限过宽**的凭据替攻击者办事 [1][4]。\n- **关键区别**：投毒是\"骗模型\"，混淆代理是\"放大伤害\"——**即使识破了投毒工具，过宽的 token scope 仍让攻击者能触达其他资源**[1]。\n\n### 其他被提及的攻击向量\n- **sampling 攻击向量**：Unit42 披露的通过 MCP sampling 发起的新攻击（知识库中标注为\"细节未读透\"）[2]。\n\n### 规范层面的应对\n2025-06-18 规范让 MCP Server 只做 **OAuth 2.1 资源服务器**，并强制 **RFC 8707 受众绑定** [4]。\n\n---\n\n**补充说明**：知识库中还提到防御分层（如把工具输出当不可信数据、网关层统一鉴权/审计/投毒扫描）[6]，以及工具投毒检测的误报率、多租户 MCP 网关隔离设计等仍属\"认知盲点\"[2]。如需展开防护措施，可进一步说明。\n\n## 参考来源\n- [1] MCP 安全与鉴权（进阶）｜深入学习 > 二、深入后的新认知 > 1. 威胁模型三大类\n- [2] MCP 安全与鉴权（进阶）｜深入学习 > 四、暴露的认知盲点\n- [4] MCP 安全与鉴权（进阶）｜深入学习 > 快速答案：MCP 安全与鉴权\n- [6] MCP 安全与鉴权（进阶）｜深入学习 > 二、深入后的新认知 > 3. 防御分层",
+      "plan": {
+        "summary": "直接检索知识库中 MCP 安全攻击类型相关内容，若不足可补充检索 MCP 安全防护措施。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "MCP 安全攻击类型 风险 漏洞",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "MCP 安全攻击类型 提示注入 工具投毒 混淆代理 令牌窃取",
+              "top_k": 8
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "MCP 安全与鉴权 进阶 攻击面 威胁模型",
+              "top_k": 8
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/SDL 安全开发生命周期落地与 Agent 适配｜深入学习.md#SDL：安全开发生命周期落地｜深入学习 > 四、认知盲点",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 四、暴露的认知盲点",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 三、与库内其他笔记的关联",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 快速答案：MCP 安全与鉴权",
+        "我的笔记/agent 学习/MCP 用统一协议连接模型与外部工具（基础篇）.md#MCP 用统一协议连接模型与外部工具（基础篇） > 安全要点",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 二、深入后的新认知（2026-09-01 检索） > 1. 威胁模型三大类（2026 年的行业共识）",
+        "AI写入/深入学习/注入与越狱用例库建设｜深入学习.md#注入与越狱用例库建设｜深入学习 > 一、用例库的三维组织",
+        "AI写入/深入学习/JWT 攻击面：算法混淆与令牌安全｜深入学习.md#JWT 攻击面：算法混淆与令牌安全｜深入学习 > 四、延伸思考问题",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 二、深入后的新认知（2026-09-01 检索） > 3. 防御分层（规范之外的工程动作）",
+        "AI写入/深入学习/Prompt 注入防护体系（综合篇）｜深入学习.md#Prompt 注入防护体系（综合篇）｜深入学习 > 一、库内已有认知",
+        "AI写入/深入学习/JWT 攻击面：算法混淆与令牌安全｜深入学习.md#JWT 攻击面：算法混淆与令牌安全｜深入学习 > 二、与库内笔记的关联",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 六、参考来源",
+        "我的笔记/网络安全/网络协议基础与攻击面.md#网络协议基础与攻击面 > 与库内笔记的关联",
+        "AI写入/深入学习/_进度.md#深入学习进度",
+        "AI写入/深入学习/MCP 安全与鉴权（进阶）｜深入学习.md#MCP 安全与鉴权（进阶）｜深入学习 > 一、库内已有认知"
+      ],
+      "metrics": {
+        "latency_s": 16.23,
+        "agent_time_s": 16.23,
+        "prompt_tokens": 3477,
+        "completion_tokens": 622,
+        "cost_yuan": 0.00472,
+        "keyword_hit": 1.0,
+        "source_hit": 1.0,
+        "citations_valid": 17,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 1.0,
+        "failure_type": "",
+        "detail": "通过"
+      },
+      "error": ""
+    },
+    {
+      "id": "v03",
+      "question": "上下文窗口快满时有哪些压缩策略？",
+      "answer": "## 上下文窗口快满时的压缩策略\n\n### 一、四种基础方案（Token 溢出应对）\n\n当上下文逼近窗口上限时，知识库归纳了四种方案 [1][2]：\n\n| 方案 | 做法 | 代价 |\n|---|---|---|\n| **滑动窗口截断** | 丢弃最早的对话内容 | 简单，但会丢掉早期约束 |\n| **摘要压缩** | 把历史蒸馏成摘要 | 省 token，但可能丢细节 |\n| **检索式加载** | 按需检索相关片段再加载 | 可扩展，但依赖检索质量 |\n| **长上下文模型** | 直接换更大窗口的模型 | 省改造，但有 \"Lost in the Middle\" 问题 |\n\n需要特别注意：**\"支持更长上下文\"不是上下文管理的替代方案** [1][2]。\n\n### 二、Anthropic 官方三策略（压缩只是第一杠杆）\n\nAnthropic 工程博客把长任务上下文管理归纳为三招 [4][5]：\n\n**① Compaction 压缩**\n逼近窗口上限时，把对话历史蒸馏成摘要，**保留结论与状态、丢弃原文** [5]。\n- 实例：Claude Code 的 auto-compact 在接近上限时自动摘要历史继续工作 [5]。\n- 反面经验：社区实测有人建议关掉 auto-compact，因为它\"悄悄消耗大量上下文\"且摘要质量不稳定——**压缩本身有成本，不是免费午餐** [5]。\n\n**② Structured note-taking 结构化笔记**\n把状态写到上下文**外部**（文件/内存区），用时再取，窗口里只留指针 [5]。\n- 实例：Claude Code 的计划文件、TODO 列表——任务清单放磁盘，每轮只读回当前要做的几行，而不是让 40 轮对话原文堆在窗口里 [5]。\n\n**③ Sub-agent architectures 子代理隔离**\n主代理只收子代理的**最终摘要**，搜索、试错的完整轨迹留在子代理自己的上下文里 [5]。\n- 实例：本知识库的自动化学习代理运行时，并不会把全库 33 篇笔记塞进上下文——先读 AGENTS.md 和任务书（固定的少量\"系统层\"），再按当日主题只检索 3–5 篇相关笔记（按需加载）[5]。\n\n### 三、为什么要压缩：Context Rot 实证\n\nChroma 的研究《Context Rot》用实验证明：输入 token 增多时，即使标称 200K–1M 窗口的模型，性能也会**非均匀退化**——退化程度取决于任务类型、信息在窗口中的**位置**、以及**干扰信息密度** [3][6]。\n\n这直接推翻了\"窗口够大就不用管理上下文\"的想法，也是\"长上下文不是替代方案\"的实证依据。所以**压缩不只是省 token，更是降噪和排布** [3][6]。\n\n### 四、与记忆淘汰的关系\n\n在记忆系统视角下，上下文过长的处理同样是**摘要压缩、检索式加载、截断**三件套，且\"长上下文模型\"不是记忆管理的替代品 [7]。这套做法借鉴操作系统内存管理：**分层存储、按需加载、淘汰与压缩、一致性检查** [7]。\n\n另外，上下文冲突时需要定义优先级：**系统规则 > 检索 > 用户输入 > 推断** [1][2]。\n\n---\n\n## 参考来源\n\n1. Context Engineering 与上下文压缩策略｜深入学习 > 一、库内已有认知\n2. Agent与RAG面试题｜基础原理、工程落地与系统架构（Q4 Token 溢出）\n3. Context Engineering 与上下文压缩策略｜深入学习 > 二、深入后的新认知 > 1. 为什么要压缩\n4. Context Engineering 与上下文压缩策略｜深入学习 > 快速答案\n5. Context Engineering 与上下文压缩策略｜深入学习 > 二、深入后的新认知 > 2. Anthropic 官方三策略\n6. Chroma《Context Rot》研究（经 Context Engineering 笔记引用）\n7. Agent 记忆系统｜深入学习 > 一、库内已有认知",
+      "plan": {
+        "summary": "从知识库检索上下文窗口接近满时的压缩策略相关片段，用于回答。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "上下文窗口快满时的压缩策略 上下文压缩 记忆淘汰",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "上下文压缩策略 滑动窗口 摘要压缩 检索式加载 实现细节",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "记忆淘汰 压缩 优先级管理 上下文窗口管理",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/Context Engineering 与上下文压缩策略｜深入学习.md#Context Engineering 与上下文压缩策略｜深入学习 > 一、库内已有认知",
+        "中间过程/MyAgents 七问｜问题到笔记映射.md#MyAgents 七问｜问题到笔记映射 > 七问映射",
+        "AI写入/深入学习/_进度.md#深入学习进度",
+        "AI写入/深入学习/Context Engineering 与上下文压缩策略｜深入学习.md#Context Engineering 与上下文压缩策略｜深入学习 > 快速答案：Context Engineering 与上下文压缩策略",
+        "AI写入/深入学习/Context Engineering 与上下文压缩策略｜深入学习.md#Context Engineering 与上下文压缩策略｜深入学习 > 二、深入后的新认知（2026-08-31 检索） > 2. Anthropic 官方三策略：压缩只是第一杠杆",
+        "AI写入/深入学习/Context Engineering 与上下文压缩策略｜深入学习.md#Context Engineering 与上下文压缩策略｜深入学习 > 二、深入后的新认知（2026-08-31 检索） > 1. 为什么要压缩：性能随输入变长**非均匀**下降（有实证）",
+        "AI写入/深入学习/Agent 记忆系统｜深入学习.md#Agent 记忆系统｜深入学习 > 一、库内已有认知",
+        "AI写入/深入学习/会话式 RAG：多轮改写与指代消解｜深入学习.md#会话式 RAG：多轮改写与指代消解｜深入学习 > 二、与库内笔记的关联",
+        "我的笔记/面经/面试回答模板.md#六、后续改进优先级"
+      ],
+      "metrics": {
+        "latency_s": 12.43,
+        "agent_time_s": 12.43,
+        "prompt_tokens": 3614,
+        "completion_tokens": 873,
+        "cost_yuan": 0.00536,
+        "keyword_hit": 1.0,
+        "source_hit": 1.0,
+        "citations_valid": 21,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 1.0,
+        "failure_type": "",
+        "detail": "通过"
+      },
+      "error": ""
+    },
+    {
+      "id": "v04",
+      "question": "Claude Agent Skills 的渐进式披露是怎么工作的？",
+      "answer": "## Claude Agent Skills 的渐进式披露（Progressive Disclosure）工作原理\n\nAnthropic 官方将渐进式披露称为 Agent Skills 的**核心设计原则** [1]。其机制分为**三层**，按\"常驻 → 按需 → 再用\"的顺序逐级加载 [1][3]：\n\n| 层级 | 内容 | 加载时机 | 成本 |\n|---|---|---|---|\n| **元数据层** | SKILL.md 的 YAML frontmatter（名称 + 描述） | **常驻**上下文 | 每个技能约几十 token |\n| **正文层** | SKILL.md 全文 | 模型判断相关后读取 | 按需 |\n| **引用层** | 技能链接的脚本 / 参考文件 | 执行需要时读取 | 按需 |\n\n[1]\n\n### 核心思路\n\n一句话概括就是：**能力目录常驻、能力全文按需** [1]。\n\n- **元数据层常驻**：只有名称和描述一直待在上下文里，每个技能仅占几十 token，所以即使技能很多，常驻开销也可控。\n- **正文层按需**：模型先靠元数据判断\"这个技能是否相关\"，只有相关时才去读 SKILL.md 全文。\n- **引用层再用**：正文里链接的脚本和参考文件，要等到真正执行需要时才加载。\n\n### 它解决什么问题\n\n渐进式披露是针对 **Skill 数量增长后模型选不准** 这一问题的两大解法之一（另一个是分层路由 / Skill 树）[3]。量化背景是：**约 30 个工具之后，选择准确率从 96% 跌破 15%** [3]。渐进式披露通过\"只常驻轻量元数据、重内容按需加载\"来减少无效上下文占用，从而缓解这一问题 [3][4]。\n\n### 与其他笔记的印证\n\n库内《企业级 Skill 的四层结构》整理稿指出：其**索引层**对应渐进披露的\"元数据层\"（名称+描述常驻），**附件层**对应\"引用层\"（按需读取），两套结构可一一对应、互相印证 [4]。此外，第 48 题\"减少无效上下文\"正是渐进式披露的动机所在 [4]。\n\n---\n\n### 参考来源\n\n- [1] Skill 路由与渐进式披露｜深入学习 > 二、深入后的新认知（2026-08 检索）> 1. 渐进式披露已有标杆实现：Claude Agent Skills\n- [3] Skill 路由与渐进式披露｜深入学习 > 快速答案：Skill 路由与渐进式披露\n- [4] 企业级 Skill 的四层结构｜整理稿 > 三、建议补充的库内关联；及 Skill 路由与渐进式披露｜深入学习 > 三、与库内其他笔记的关联\n\n> 注：片段 [2] 为参考来源清单（Anthropic 官方工程博客、Claude 平台文档等），未提供机制细节，故未在正文引用。",
+      "plan": {
+        "summary": "单步检索知识库中 Claude Agent Skills 渐进式披露的相关内容并据此作答。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Claude Agent Skills 渐进式披露 工作原理",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "Claude Agent Skills 渐进式披露 三层 元数据 SKILL.md 加载时机 成本",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 二、深入后的新认知（2026-08 检索） > 1. 渐进式披露（progressive disclosure）已有标杆实现：Claude Agent Skills",
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 六、参考来源",
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 快速答案：Skill 路由与渐进式披露",
+        "AI写入/深入学习/Skill 路由与渐进式披露｜深入学习.md#Skill 路由与渐进式披露｜深入学习 > 三、与库内其他笔记的关联",
+        "中间过程/企业级skill｜整理稿.md#企业级 Skill 的四层结构｜整理稿 > 三、建议补充的库内关联（原稿未链接但强相关）",
+        "中间过程/Skill 数量增长后的路由与命中策略｜整理稿.md#Skill 数量增长后的路由与命中策略｜整理稿 > 二、草稿两条思路的展开 > 思路二：大模型自动截断（上下文侧路由）"
+      ],
+      "metrics": {
+        "latency_s": 12.71,
+        "agent_time_s": 12.71,
+        "prompt_tokens": 2244,
+        "completion_tokens": 645,
+        "cost_yuan": 0.00353,
+        "keyword_hit": 0.67,
+        "source_hit": 1.0,
+        "citations_valid": 15,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 0.8333,
+        "failure_type": "keyword_miss",
+        "detail": "来源命中但关键词缺失"
+      },
+      "error": ""
+    },
+    {
+      "id": "v05",
+      "question": "RAG 回答效果不好，怎么定位问题在检索侧还是生成侧？",
+      "answer": "## RAG 效果不好：检索侧 vs 生成侧的定位方法\n\n核心思路是**用 RAGAS 四指标做正交分解，交叉定位故障出在哪一段**[2][4]。\n\n### 一、四指标分两组\n\nRAGAS 是事实上的标准框架，四个指标分成**检索组**和**生成组**，交叉起来就能定位问题出在哪一段 [2][4]：\n\n| 指标 | 分组 | 测什么 | 低分说明 |\n|---|---|---|---|\n| **Context Precision** | 检索组 | 召回的 chunk 里有用内容是否排在前面 | 检索排序有问题（该用 rerank）[2][4] |\n| **Context Recall** | 检索组 | 答案需要的 ground-truth 信息是否都被召回 | 分块 / 嵌入 / 查询改写有问题 [2][4] |\n| **Faithfulness** | 生成组 | 答案是否忠实于召回的上下文 | 生成侧幻觉——模型无视证据 [2][4] |\n| **Answer Relevancy** | 生成组 | 答案是否切题 | 生成侧偏题——指令或上下文组装问题 [2][4] |\n\n### 二、交叉定位表（最值钱的一张表）\n\n**实例 A（定位表）**[2][4]：\n\n- **Faithfulness 高 + Context Recall 低** → 模型忠实但资料不全 → **优化检索**（扩 top-k、改分块），**不要动模型**；\n- **Faithfulness 低 + Context Precision 高** → 证据就在眼前却编造 → **换模型 / 加引用约束**，**不要改检索**。\n\n### 三、按低分指标对应的修复动作\n\n用四指标交叉定位后，各指标低分对应的动作 [1]：\n\n- **Context Recall 低** = 检索没找全 → 改分块、查询改写、扩 top-k；\n- **Faithfulness 低** = 有证据仍编造 → 生成侧：换模型、加引用约束；\n- **Answer Relevancy 低** = 答非所问 → 生成侧：改指令。\n\n### 四、补充认知\n\n- RAG 高度依赖检索质量，**检索没召回正确文档，后面生成再好也没用**；实际项目中通常是**先把检索链路打磨好，再去优化生成端** [6]。\n- RAG 不能从机制上消除幻觉；召回错误、上下文冲突、过度推断是幻觉三成因 [2]。\n- 指标计算方式（LLM-as-Judge 模板化实现）：Faithfulness = 答案拆原子断言 → 逐条问 LLM\"能否从上下文推出\"→ 支撑数/总断言数；Answer Relevancy = 从答案反向生成 N 个可能问题 → 与真实问题算嵌入相似度均值；Context Precision = 检索块排名加权 [1]。\n- 各指标的失效边界：Faithfulness 受拆句质量影响（拆不出隐含断言会虚高）；Answer Relevancy 在答案啰嗦但切题时会虚低；Context Precision 依赖\"哪些块相关\"的标注；Context Recall 受 ground truth 质量天花板限制 [3]。\n\n### 五、一个权衡提醒\n\n\"无证据则说不知道\"的拒答约束会让 **Faithfulness 上升但 Answer Relevancy 可能下降**，这对矛盾需要权衡 [3]。\n\n---\n\n**参考来源**\n\n[1] RAG 评测与召回质量优化｜深入学习 > 快速答案：RAG 效果不好怎么定位？\n[2] RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知 > 1. RAGAS 四指标的正交分解：故障定位的钥匙\n[3] RAGAS 源码精读：指标是怎么算出来的｜深入学习 > 一、四指标的实现与边界\n[4] RAG 评测与召回质量优化｜深入学习 > 五、延伸思考问题\n[5] RAG 面试题 > 1. 什么是 RAG？ > RAG 和微调的关系\n[6] RAG 评测与召回质量优化｜深入学习 > 一、库内已有认知",
+      "plan": {
+        "summary": "先检索 RAG 效果诊断与分侧定位方法，再检索检索/生成两端的评估指标，综合给出定位思路。",
+        "steps": [
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "RAG 效果不好 定位问题 检索侧 生成侧 诊断 评估",
+              "top_k": 6
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "RAG 检索质量评估指标 召回率 上下文相关性 忠实度 faithfulness",
+              "top_k": 5
+            },
+            "ok": true,
+            "error": ""
+          },
+          {
+            "action": "search_knowledge_base",
+            "input": {
+              "query": "RAGAS 四指标 Context Recall Context Precision Faithfulness Response Relevancy 诊断流程 排查步骤",
+              "top_k": 6
+            },
+            "ok": true,
+            "error": ""
+          }
+        ],
+        "fallback": false
+      },
+      "sources": [
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 快速答案：RAG 效果不好怎么定位？",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 一、库内已有认知",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 五、延伸思考问题",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 1. RAGAS 四指标的正交分解：故障定位的钥匙",
+        "项目/MyAgents 检索基线测试（2026-09-04）.md#MyAgents 检索基线测试（2026-09-04） > 基线 → 改进对比",
+        "我的笔记/agent 学习/大模型学习题/RAG 面试题.md#RAG 面试题 > 1. 什么是 RAG？它主要解决了什么问题？ > RAG 和微调的关系",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 六、参考来源",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 三、与库内其他笔记的关联",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 2. 召回质量的三个优化杠杆（按性价比排序）",
+        "AI写入/深入学习/RAGAS 源码精读：指标是怎么算出来的｜深入学习.md#RAGAS 源码精读：指标是怎么算出来的｜深入学习 > 快速答案",
+        "AI写入/深入学习/RAGAS 源码精读：指标是怎么算出来的｜深入学习.md#RAGAS 源码精读：指标是怎么算出来的｜深入学习 > 一、四指标的实现与边界",
+        "AI写入/深入学习/RAG 评测与召回质量优化｜深入学习.md#RAG 评测与召回质量优化｜深入学习 > 二、深入后的新认知（2026-09-03 检索） > 3. worked example：给本知识库建评测集"
+      ],
+      "metrics": {
+        "latency_s": 15.24,
+        "agent_time_s": 15.24,
+        "prompt_tokens": 4256,
+        "completion_tokens": 892,
+        "cost_yuan": 0.00604,
+        "keyword_hit": 1.0,
+        "source_hit": 1.0,
+        "citations_valid": 26,
+        "citations_invalid": 0,
+        "citation_hallucination": 0.0,
+        "task_completed": 1.0
+      },
+      "judge": null,
+      "category": "fact",
+      "reward": {
+        "score": 1.0,
+        "failure_type": "",
+        "detail": "通过"
+      },
+      "error": ""
+    }
+  ]
+}

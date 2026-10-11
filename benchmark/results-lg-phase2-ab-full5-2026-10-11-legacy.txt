@@ -1,0 +1,29 @@
+2026-10-11 21:20:11 | INFO    | config | 默认行为已变更：联网降级与长期记忆默认关闭（tools.kb_fallback_web、memory.long_term_enabled、memory.entities_enabled 未显式设置，本次起按默认关闭执行）。如需保持原行为，请在设置面板或 data/runtime.json 中显式开启对应开关。
+2026-10-11 21:20:11 | INFO    | sentence_transformers.base.model | No device provided, using mps
+2026-10-11 21:20:11 | INFO    | sentence_transformers.base.model | Loading SentenceTransformer model from BAAI/bge-small-zh-v1.5.
+Loading weights:   0%|          | 0/71 [00:00<?, ?it/s]Loading weights: 100%|██████████| 71/71 [00:00<00:00, 5732.24it/s]
+Building prefix dict from the default dictionary ...
+2026-10-11 21:20:27 | DEBUG   | jieba | Building prefix dict from the default dictionary ...
+Loading model from cache /var/folders/cj/v18ts5qn1wlg0ns28wsyd6yw0000gn/T/jieba.cache
+2026-10-11 21:20:27 | DEBUG   | jieba | Loading model from cache /var/folders/cj/v18ts5qn1wlg0ns28wsyd6yw0000gn/T/jieba.cache
+Loading model cost 0.382 seconds.
+2026-10-11 21:20:27 | DEBUG   | jieba | Loading model cost 0.382 seconds.
+Prefix dict has been built successfully.
+2026-10-11 21:20:27 | DEBUG   | jieba | Prefix dict has been built successfully.
+2026-10-11 21:20:29 | INFO    | sentence_transformers.base.model | No device provided, using mps
+2026-10-11 21:20:29 | INFO    | sentence_transformers.base.model | No modules.json found for BAAI/bge-reranker-base, initializing a new CrossEncoder model.
+2026-10-11 21:20:39 | INFO    | agent | ask | q=Agent 的记忆系统有哪些分层？长期记忆应该存什么不应该存什么？ | 10.0s | calls=3 | in=3525 out=653 | ¥0.0048 | ok
+2026-10-11 21:20:55 | INFO    | agent | ask | q=MCP 有哪些安全攻击类型？ | 16.2s | calls=4 | in=7002 out=1275 | ¥0.0096 | ok
+2026-10-11 21:21:08 | INFO    | agent | ask | q=上下文窗口快满时有哪些压缩策略？ | 12.4s | calls=4 | in=10616 out=2148 | ¥0.0149 | ok
+2026-10-11 21:21:20 | INFO    | agent | ask | q=Claude Agent Skills 的渐进式披露是怎么工作的？ | 12.7s | calls=4 | in=12860 out=2793 | ¥0.0184 | ok
+2026-10-11 21:21:35 | INFO    | agent | ask | q=RAG 回答效果不好，怎么定位问题在检索侧还是生成侧？ | 15.2s | calls=4 | in=17116 out=3685 | ¥0.0245 | ok
+[rerank] Cross-Encoder 不可用（OSError: BAAI/bge-reranker-base does not appear to have a file named pytorch_model.bin or model.safetensors.），检索将无精排
+[index] 父块 2300 / 叶子 8757 | backend=local dim=512 | 上下文增强=0 | 18.2s
+[v01] kw=100% src=100% halluc=0% done=是 10.0s cost=¥0.0048 | Agent 的记忆系统有哪些分层？长期记忆应该存什么不应该存什么？
+[v02] kw=100% src=100% halluc=0% done=是 16.2s cost=¥0.0047 | MCP 有哪些安全攻击类型？
+[v03] kw=100% src=100% halluc=0% done=是 12.4s cost=¥0.0054 | 上下文窗口快满时有哪些压缩策略？
+[v04] kw=67% src=100% halluc=0% done=是 12.7s cost=¥0.0035 | Claude Agent Skills 的渐进式披露是怎么工作的？
+[v05] kw=100% src=100% halluc=0% done=是 15.2s cost=¥0.0060 | RAG 回答效果不好，怎么定位问题在检索侧还是生成侧？
+
+结果已写入 /Users/mima1234/Documents/myAgents/benchmark/results.json
+汇总表已写入 /Users/mima1234/Documents/myAgents/benchmark/results.md
