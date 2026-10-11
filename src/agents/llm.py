@@ -206,6 +206,7 @@ class LLMClient:
                     stream=True,
                 )
                 if resp.status_code == 429:
+                    resp.close()
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 resp.raise_for_status()
@@ -217,8 +218,14 @@ class LLMClient:
             parts: list[str] = []
             usage: dict = {}
             try:
-                for line in resp.iter_lines(decode_unicode=True):
-                    if not line or not line.startswith("data:"):
+                # 按字节迭代再手动 utf-8 解码：decode_unicode=True 在端点不带 charset 时
+                # 按 ISO-8859-1 解码，且 str.splitlines 会把 CJK 字节 0x85 当换行——
+                # 中文内容会静默丢失（T-008 独立验收实测抓出；本地端点如 Ollama 高危）。
+                for raw_line in resp.iter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+                    if not line.startswith("data:"):
                         continue
                     data_str = line[len("data:"):].strip()
                     if data_str == "[DONE]":
@@ -241,6 +248,7 @@ class LLMClient:
                             except Exception:  # noqa: BLE001 - 回调（前端断连等）不影响生成
                                 pass
             except Exception as e:  # noqa: BLE001 - 已产出 token，不可安全重试
+                resp.close()
                 self._audit_llm(ok=False, latency_s=time.monotonic() - t0, error_type=type(e).__name__)
                 raise LLMError(f"LLM 流式读取中断（已产出 {len(parts)} 个 chunk，不可重试）: {e}") from e
 

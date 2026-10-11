@@ -159,6 +159,56 @@ class StreamAskTests(unittest.TestCase):
         self.assertEqual(llm.stream_calls, 0)
         print("✓ invoke 路径零流式（闸门生效，legacy 行为不变）")
 
+    def test_chat_stream_decodes_utf8_without_charset(self):
+        """T-008 验收回归：charset 缺失的 SSE 端点 + 原生 UTF-8 中文，
+        decode_unicode=True 会按 ISO-8859-1 解码且 CJK 0x85 被当换行——静默丢字。
+        按字节解码后必须完整聚合（本地端点如 Ollama 的真实风险）。"""
+        import json as _json
+
+        import agents.llm as llm_mod
+
+        sse_lines = [
+            b'data: ' + _json.dumps({"choices": [{"delta": {"content": "中文"}}]}, ensure_ascii=False).encode("utf-8"),
+            b'data: ' + _json.dumps({"choices": [{"delta": {"content": "内容，测"}}]}, ensure_ascii=False).encode("utf-8"),
+            b'data: ' + _json.dumps({"choices": [{"delta": {"content": "试混合"}}]}, ensure_ascii=False).encode("utf-8"),
+            b"data: [DONE]",
+        ]
+
+        class _FakeResp:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def iter_lines(self):
+                return iter(sse_lines)
+
+        class _FakePost:
+            def __enter__(self):
+                return _FakeResp()
+
+            def __exit__(self, *args):
+                return False
+
+        captured: list[str] = []
+        original_post = llm_mod.requests.post
+        llm_mod.requests.post = lambda *a, **k: _FakeResp()
+        try:
+            llm = MultiFakeLLM.__new__(MultiFakeLLM)
+            llm.config = self.config
+            llm.base_url = "http://127.0.0.1:9"
+            llm.api_key = ""  # G11：local 档位允许为空（_request_headers 不带 Authorization）
+            llm.calls = 0
+            result = LLMClient.chat_stream(
+                llm, [{"role": "user", "content": "q"}],
+                on_token=captured.append, max_tokens=64,
+            )
+        finally:
+            llm_mod.requests.post = original_post
+        self.assertEqual(result.text, "中文内容，测试混合")
+        self.assertEqual(captured, ["中文", "内容，测", "试混合"])
+        print("✓ chat_stream 按字节解码：charset 缺失端点中文不丢字")
+
     def test_stream_with_session_and_rewrite(self):
         from agents.agent_graph import stream_graph_ask
 
