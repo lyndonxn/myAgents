@@ -136,8 +136,10 @@ def route_clarify(state) -> str:
     return "retrieve" if state.get("pending_requery") else "generate"
 
 
-def make_generate_node(agent, on_stage=None, streaming: bool = False):
-    """合成节点：把检索结果组装为与 legacy 工具同构的单步输出，复用 _synthesize。
+def make_generate_node(agent, on_stage=None, streaming: bool = False, web_allowed: bool = False):
+    """合成节点：两路汇合——单发分支用检索子图结果组装单步输出；
+    ReAct 分支直接复用 state["steps"]（真实工具输出）与 legacy 的
+    来源收集/未命中判定。均复用 _synthesize / synthesize_stream。
 
     streaming=True（仅 stream_graph_ask 构建）时经 get_stream_writer 把 token
     以 {"event": "delta"} 自定义事件写出；非流式上下文该调用抛 RuntimeError，
@@ -149,38 +151,52 @@ def make_generate_node(agent, on_stage=None, streaming: bool = False):
             return {}
         _emit_stage(on_stage, "生成答案")
         try:
-            chunks = state.get("chunks") or []
             question = state.get("question", "")
             search_query = state.get("search_query") or question
-            lines = [f"针对「{search_query}」检索到 {len(chunks)} 条相关片段："]
-            sources: list[str] = []
-            sources_detail: list[dict] = []
-            for rank, hit in enumerate(chunks, start=1):
-                lines.append(_fmt_hit(rank, hit))
-                src = hit.source or hit.file
-                if src not in sources:
-                    sources.append(src)
-                    sources_detail.append(_hit_detail(hit))
-            output = {
-                "text": "\n".join(lines),
-                "sources": sources,
-                "hit_count": len(chunks),
-                "sources_detail": sources_detail,
-            }
-            step = StepResult(
-                step_id=1,
-                action="search_knowledge_base",
-                input={"query": search_query},
-                output=output,
-                ok=True,
-            )
-            plan = Plan(
-                reasoning="LangGraph 图编排：单步检索→合成→引用校验",
-                plan_summary="LangGraph：检索→（澄清）→生成→引用校验",
-                steps=[PlanStep(action="search_knowledge_base", input={"query": search_query}, step_id=1)],
-            )
-            # 知识库零命中提示与 legacy ask 口径一致；澄清被跳过/未命中时同样生效
-            hint = _KB_MISS_HINT if not chunks else ""
+            react_steps = state.get("steps") or []
+            if react_steps:
+                # ReAct 多步路径：真实工具步骤 → legacy 同款来源收集与未命中判定
+                info = agent._collect_source_info(react_steps)
+                sources = [src for src, _ in info]
+                sources_detail = [
+                    detail or {"title": src, "path": src, "heading": "", "snippet": ""}
+                    for src, detail in info
+                ]
+                plan = state.get("plan") or Plan(reasoning="LangGraph ReAct 多步编排", steps=[])
+                steps_for_synth = react_steps
+                hint = _KB_MISS_HINT if agent._kb_miss(react_steps, web_allowed=web_allowed) else ""
+            else:
+                chunks = state.get("chunks") or []
+                lines = [f"针对「{search_query}」检索到 {len(chunks)} 条相关片段："]
+                sources: list[str] = []
+                sources_detail: list[dict] = []
+                for rank, hit in enumerate(chunks, start=1):
+                    lines.append(_fmt_hit(rank, hit))
+                    src = hit.source or hit.file
+                    if src not in sources:
+                        sources.append(src)
+                        sources_detail.append(_hit_detail(hit))
+                output = {
+                    "text": "\n".join(lines),
+                    "sources": sources,
+                    "hit_count": len(chunks),
+                    "sources_detail": sources_detail,
+                }
+                plan = state.get("plan") or Plan(
+                    reasoning="LangGraph 图编排：单步检索→合成→引用校验",
+                    plan_summary="LangGraph：检索→（澄清）→生成→引用校验",
+                    steps=[PlanStep(action="search_knowledge_base", input={"query": search_query}, step_id=1)],
+                )
+                steps_for_synth = [StepResult(
+                    step_id=1,
+                    action="search_knowledge_base",
+                    input={"query": search_query},
+                    output=output,
+                    ok=True,
+                )]
+                # 知识库零命中提示与 legacy ask 口径一致；澄清被跳过/未命中时同样生效
+                hint = _KB_MISS_HINT if not chunks else ""
+
             on_token = None
             if streaming:
                 try:
@@ -192,7 +208,7 @@ def make_generate_node(agent, on_stage=None, streaming: bool = False):
                 if callable(writer):
                     on_token = lambda t: writer({"event": "delta", "text": t})  # noqa: E731
             draft = agent.synthesize_stream(
-                question, plan, [step],
+                question, plan, steps_for_synth,
                 history_text=state.get("history_text", ""),
                 extra_hint=hint,
                 on_token=on_token,
@@ -201,7 +217,7 @@ def make_generate_node(agent, on_stage=None, streaming: bool = False):
                 "draft": draft,
                 "sources": sources,
                 "sources_detail": sources_detail,
-                "step_result": step,
+                "step_result": steps_for_synth[-1] if steps_for_synth else None,
                 "plan": plan,
             }
         except Exception as exc:  # noqa: BLE001 - C5：失败显式入 state，由条件边路由 error_node

@@ -212,6 +212,8 @@ class Handler(BaseHTTPRequestHandler):
                 # G3 状态披露（ACC-U3-01）：degraded=任一步 KB→Web 降级；web_used=发生了 web_search 外发
                 **_egress_flags(answer.steps),
             },
+            # LangGraph 澄清（spec/09 T-010）：挂起 interrupt 载荷（新增键，legacy 恒为空 dict）
+            "pending_clarification": dict(getattr(answer, "pending_clarification", None) or {}),
         }
 
     def _active_workspace(self) -> dict:
@@ -659,6 +661,41 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"question": question, "session_id": session_id, **response})
             return
 
+        if self.path == "/api/clarify":
+            # LangGraph 澄清端点（spec/09 T-010，PH3-ACC-001）：对挂起 interrupt 的
+            # 会话显式提交澄清内容并恢复图执行；无挂起时 409（用 /api/ask 提新问题）。
+            if payload is None:
+                self._send_json({"error": "请求格式错误"}, 400)
+                return
+            clarification = str(payload.get("clarification", "")).strip()
+            session_id = str(payload.get("session_id", "")).strip()
+            if not clarification:
+                self._send_json({"error": "澄清内容不能为空"}, 400)
+                return
+            if self.agent.config.engine != "langgraph":
+                self._send_json({"error": "澄清端点仅 LangGraph 引擎可用", "code": "ENGINE_UNSUPPORTED"}, 400)
+                return
+            if not self.agent.config.llm_api_key:
+                self._send_json({"error": "请先在设置中配置模型 API Key", "code": "MODEL_NOT_CONFIGURED"}, 428)
+                return
+            workspace = self._active_workspace()
+            try:
+                session_id = self._session_for_workspace(session_id, workspace["id"])
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 409)
+                return
+            from .agent_graph.runner import get_pending_clarification
+
+            pending = get_pending_clarification(self.agent, session_id)
+            if not pending:
+                self._send_json({"error": "当前会话没有待澄清的提问", "code": "NO_PENDING_CLARIFICATION"}, 409)
+                return
+            with self.lock:
+                answer = self.agent.ask(clarification, session_id=session_id)  # 同会话下一问即澄清语义
+            response = self._persist_answer(session_id, workspace["id"], clarification, answer)
+            self._send_json({"question": clarification, "session_id": session_id, **response})
+            return
+
         if self.path == "/api/ask_stream":
             if payload is None:
                 self._send_json({"error": "请求格式错误"}, 400)
@@ -721,6 +758,9 @@ class Handler(BaseHTTPRequestHandler):
                             on_stage=emit_stage,  # W1：阶段回调异常在 ask 内部吞掉，不影响生成
                         )
                 response = self._persist_answer(session_id, workspace["id"], question, answer)
+                # LangGraph 澄清（spec/09 T-010）：挂起时先发 clarify 事件（载荷=interrupt.value）
+                if getattr(answer, "pending_clarification", None):
+                    emit("clarify", **answer.pending_clarification)
                 emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], sources_detail=response.get("sources_detail", []), plan=response["plan"], metrics=response["metrics"])
                 if self.agent.config.engine != "langgraph":
                     # legacy：ask 完成后把整段答案按 24 字符切块下发（图引擎的 delta 已实时流出）

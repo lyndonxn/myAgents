@@ -70,33 +70,59 @@ def _get_checkpointer(agent):
     return saver
 
 
-def build_answer_graph(agent, on_stage=None, checkpointer=None, streaming: bool = False):
-    """组装并编译主图（LG-0.5 显式条件边错误路由；streaming 仅 stream_graph_ask 置真）。"""
+def build_answer_graph(agent, on_stage=None, checkpointer=None, streaming: bool = False, allow_web=None):
+    """组装并编译主图（LG-0.5 显式条件边错误路由；streaming 仅 stream_graph_ask 置真）。
+
+    v3（spec/09 T-011）：route_entry → plan_node 双分支——G9 快路径 → 单发分支
+    （检索并行子图 + 澄清）；复杂问题 → ReAct 多步路径（execute/reflect）。
+    两路在 generate 汇合，共享 validate/commit 尾段。
+    """
     from langgraph.graph import StateGraph, START, END
 
+    from .react import make_react_nodes
     from .retrieval_subgraph import build_retrieval_subgraph
 
     if agent.retriever is None:
         raise RuntimeError("检索器未初始化：请先加载/构建索引（agent.load_index()）")
 
+    effective_allow_web = agent.resolve_allow_web(allow_web)
+    run_tools = agent._tools_for_run(effective_allow_web)
+    react = make_react_nodes(agent, run_tools, effective_allow_web)
+
     graph = StateGraph(GraphState)
     graph.add_node("route_entry", timed("route_entry", make_route_entry(agent, on_stage)))
+    graph.add_node("plan_node", timed("plan_node", react["plan_node"]))
     graph.add_node("retrieve", build_retrieval_subgraph(agent.retriever))
     graph.add_node("clarify_check", timed("clarify_check", make_clarify_node(agent)))
-    graph.add_node("generate", timed("generate", make_generate_node(agent, on_stage, streaming=streaming)))
+    graph.add_node("execute_node", timed("execute_node", react["execute_node"]))
+    graph.add_node("reflect_node", timed("reflect_node", react["reflect_node"]))
+    graph.add_node("generate", timed(
+        "generate", make_generate_node(agent, on_stage, streaming=streaming, web_allowed=effective_allow_web)
+    ))
     graph.add_node("validate_citations", timed("validate_citations", make_validate_node(agent)))
     graph.add_node("commit_turn", timed("commit_turn", commit_turn))
     graph.add_node("error_node", timed("error_node", error_node))
 
     graph.add_edge(START, "route_entry")
     graph.add_conditional_edges(
-        "route_entry", route_ok_or_error("retrieve"), {"retrieve": "retrieve", "error_node": "error_node"}
+        "route_entry", route_ok_or_error("plan_node"), {"plan_node": "plan_node", "error_node": "error_node"}
+    )
+    graph.add_conditional_edges(
+        "plan_node", react["route_after_plan"],
+        {"retrieve": "retrieve", "execute": "execute_node", "error_node": "error_node"},
     )
     graph.add_conditional_edges(
         "retrieve", route_ok_or_error("clarify_check"), {"clarify_check": "clarify_check", "error_node": "error_node"}
     )
     graph.add_conditional_edges(
         "clarify_check", route_clarify, {"retrieve": "retrieve", "generate": "generate"}
+    )
+    graph.add_conditional_edges(
+        "execute_node", route_ok_or_error("reflect_node"),
+        {"reflect_node": "reflect_node", "error_node": "error_node"},
+    )
+    graph.add_conditional_edges(
+        "reflect_node", route_ok_or_error("generate"), {"generate": "generate", "error_node": "error_node"}
     )
     graph.add_conditional_edges(
         "generate", route_ok_or_error("validate_citations"),
@@ -110,7 +136,7 @@ def build_answer_graph(agent, on_stage=None, checkpointer=None, streaming: bool 
     return graph.compile(checkpointer=checkpointer) if checkpointer else graph.compile()
 
 
-def _prepare_run(agent, question: str, session_id: str, resume: bool, on_stage, streaming: bool = False):
+def _prepare_run(agent, question: str, session_id: str, resume: bool, on_stage, streaming: bool = False, allow_web=None):
     """两次入口共用的运行准备：checkpointer 决策、thread 映射、输入构造（含恢复语义）。
 
     返回 (app, config, graph_input, error)；error 非空时其余为 None。
@@ -119,7 +145,7 @@ def _prepare_run(agent, question: str, session_id: str, resume: bool, on_stage, 
         LOG.warning("retrieval.multi_query=true 在 LangGraph 图路径暂不支持（Phase 0），本次按单查询执行")
     use_checkpoint = bool(session_id) or resume
     checkpointer = _get_checkpointer(agent) if use_checkpoint else None
-    app = build_answer_graph(agent, on_stage=on_stage, checkpointer=checkpointer, streaming=streaming)
+    app = build_answer_graph(agent, on_stage=on_stage, checkpointer=checkpointer, streaming=streaming, allow_web=allow_web)
     config = {"configurable": {"thread_id": session_id or f"adhoc-{uuid.uuid4()}"}}
 
     if resume:
@@ -141,16 +167,25 @@ def _prepare_run(agent, question: str, session_id: str, resume: bool, on_stage, 
 def _finalize_answer(answer: Answer, final: dict, agent, use_checkpoint: bool, app=None, config: dict | None = None) -> Answer:
     """两次入口共用的收尾：final state → Answer（LG-2.2 节点指标随 Answer 暴露）。"""
     answer.plan = final.get("plan") or Plan()
+    react_steps = final.get("steps") or []
     step = final.get("step_result")
-    answer.steps = [step] if step is not None else []
+    if react_steps:
+        answer.steps = list(react_steps)   # ReAct 多步路径：全部真实工具步骤
+    elif step is not None:
+        answer.steps = [step]
     answer.sources = final.get("sources") or []
     answer.sources_detail = final.get("sources_detail") or []
     answer.final_answer = final.get("draft", "")
     answer.citations_valid = final.get("citations_valid", 0)
     answer.citations_invalid = final.get("citations_invalid", 0)
     answer.node_metrics = final.get("node_metrics") or []
-    # 计数语义与 legacy 对齐：改写/合成等图内 LLM 调用数 + 合成一次
-    answer.llm_calls = final.get("llm_call_count", 0) + (1 if step is not None else 0)
+    # 计数与 legacy 同口径：改写(route) + 规划(plan) + 反思(reflect 内部自计) + 合成(1)
+    synth_called = 1 if (step is not None or final.get("draft")) else 0
+    answer.llm_calls = (
+        final.get("llm_call_count", 0)
+        + final.get("reflect_llm_calls", 0)
+        + synth_called
+    )
     if final.get("error"):
         answer.error = final["error"]
 
@@ -171,6 +206,19 @@ def _finalize_answer(answer: Answer, final: dict, agent, use_checkpoint: bool, a
     answer.completion_tokens = agent.completion_tokens
     answer.estimated_cost = agent.estimated_cost
     return answer
+
+
+def get_pending_clarification(agent, session_id: str) -> dict:
+    """查询会话是否存在挂起澄清（T-010 /api/clarify 守卫）。
+
+    无 session_id 或无 Checkpointer 状态时返回 {}；有挂起时返回 interrupt 载荷
+    （type/question/message）。
+    """
+    if not session_id:
+        return {}
+    app = build_answer_graph(agent, checkpointer=_get_checkpointer(agent))
+    config = {"configurable": {"thread_id": session_id}}
+    return _extract_interrupt(app.get_state(config))
 
 
 def _extract_interrupt(snapshot) -> dict:
@@ -220,7 +268,7 @@ def run_graph_ask(
     answer = Answer(question=question)
     t0 = time.monotonic()
     try:
-        app, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage)
+        app, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage, allow_web=allow_web)
         if err:
             answer.error = err
             return _finish_meta(answer, agent, question, session_id, t0)
@@ -262,7 +310,7 @@ def stream_graph_ask(
     answer = Answer(question=question)
     t0 = time.monotonic()
     try:
-        app, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage, streaming=True)
+        app, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage, streaming=True, allow_web=allow_web)
         if err:
             answer.error = err
             yield {"event": "_result", "answer": answer}

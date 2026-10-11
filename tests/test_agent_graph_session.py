@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,33 @@ class ScriptedLLM(LLMClient):
         return ChatResult(text=text, prompt_tokens=10, completion_tokens=5, latency_s=0.0)
 
 
+class ContentRoutedLLM(LLMClient):
+    """按提示词内容路由的离线假 LLM（对调用顺序/修复轮免疫）：
+    改写 → rewrite；规划器系统词 → plan_json；反思系统词 → reflect_json；合成 → synth。"""
+
+    def __init__(self, config: Config, rewrite: str, plan_json: str, reflect_json: str, synth: str):
+        self.config = config
+        self.rewrite, self.plan_json, self.reflect_json, self.synth = rewrite, plan_json, reflect_json, synth
+        self.calls = 0
+        self.seen: list[list[dict]] = []
+
+    def _chat(self, messages: list[dict], **kwargs) -> ChatResult:
+        self.calls += 1
+        self.seen.append([dict(m) for m in messages])
+        return ChatResult(text=self._route(messages), prompt_tokens=10, completion_tokens=5, latency_s=0.0)
+
+    def _route(self, messages: list[dict]) -> str:
+        last = messages[-1]["content"]
+        system = messages[0]["content"] if messages else ""
+        if "改写后的独立查询" in last:
+            return self.rewrite
+        if "反思协调器" in system:
+            return self.reflect_json
+        if "任务规划器" in system:
+            return self.plan_json
+        return self.synth
+
+
 def make_config(tmp_dir: str, checkpoint_db: str = "", clarify: bool = False) -> Config:
     raw = {
         "data_dir": tmp_dir,
@@ -103,14 +131,25 @@ class SessionContinuityTests(unittest.TestCase):
             self.assertEqual(answer1.llm_calls, 1)
 
             # 第二轮：全新实例 B（同 checkpoint 库）继续同一会话
+            # Phase 3 起多轮问题走完整规划（legacy 同口径：有历史 → planner）——
+            # 内容路由假 LLM：改写 → 规划 JSON → 反思 JSON → 合成
+            plan_json = json.dumps({
+                "reasoning": "检索父块", "plan_summary": "单步检索",
+                "steps": [{"action": "search_knowledge_base", "input": {"query": "父块"}}],
+            }, ensure_ascii=False)
+            reflect_json = json.dumps({"need_more": False, "reasoning": "信息足够", "steps": []}, ensure_ascii=False)
             agent_b = make_agent(
                 make_config(tmp, db),
-                ScriptedLLM(make_config(tmp, db), ["父块", "父块是检索命中的完整章节上下文 [1]。"]),
+                ContentRoutedLLM(
+                    make_config(tmp, db),
+                    rewrite="父块", plan_json=plan_json, reflect_json=reflect_json,
+                    synth="父块是检索命中的完整章节上下文 [1]。",
+                ),
             )
             answer2 = agent_b.ask("那父块呢？", session_id="s1")
             self.assertTrue(answer2.ok, answer2.error)
-            # 改写 1 次 + 合成 1 次
-            self.assertEqual(answer2.llm_calls, 2)
+            # 改写 1 + 规划 1 + 反思 1 + 合成 1（legacy 同口径）
+            self.assertEqual(answer2.llm_calls, 4)
             # 追问改写提示词里包含第一轮历史（"什么是 RAG"）
             rewrite_msgs = agent_b.llm.seen[0]
             self.assertIn("查询改写器", rewrite_msgs[0]["content"])

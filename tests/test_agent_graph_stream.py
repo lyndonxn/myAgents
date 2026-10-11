@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -214,9 +215,16 @@ class StreamAskTests(unittest.TestCase):
 
         db = str(Path(self._tmp.name) / "checkpoints.sqlite")
         self.config._raw["graph"] = {"checkpoint_db": db, "clarify_on_miss": False}
+        # Phase 3 起多轮问题走完整规划（legacy 同口径）：脚本依次提供
+        # 改写 → 规划 JSON → 反思 JSON → 流式合成
+        plan_json = json.dumps({
+            "reasoning": "检索父块", "plan_summary": "单步检索",
+            "steps": [{"action": "search_knowledge_base", "input": {"query": "父块"}}],
+        }, ensure_ascii=False)
+        reflect_json = json.dumps({"need_more": False, "reasoning": "信息足够", "steps": []}, ensure_ascii=False)
         llm = MultiFakeLLM(
             self.config,
-            chat_texts=["改写后的独立查询"],
+            chat_texts=["改写后的独立查询", plan_json, reflect_json],
             stream_text="父块是检索命中的完整章节 [1]。",
             stream_tokens=["父块是", "检索命中的", "完整章节 [1]。"],
         )
@@ -226,10 +234,10 @@ class StreamAskTests(unittest.TestCase):
         second = list(stream_graph_ask(agent, question="那父块呢？", session_id="s9"))
         answer2 = second[-1]["answer"]
         self.assertTrue(answer2.ok, answer2.error)
-        self.assertEqual(answer2.llm_calls, 2, "改写 1 次 + 流式合成 1 次")
-        self.assertIn("什么是 RAG？", llm.seen[1][1]["content"], "改写提示词应含第一轮历史")
+        self.assertEqual(answer2.llm_calls, 4, "改写 1 + 规划 1 + 反思 1 + 流式合成 1（legacy 同口径）")
+        self.assertIn("什么是 RAG？", llm.seen[0][1]["content"], "改写提示词应含第一轮历史")
         self.assertTrue([ev for ev in second if ev.get("event") == "delta"], "第二轮仍为真流式")
-        print("✓ 流式 × Checkpointer 会话：追问改写 + 逐 token 流式共存")
+        print("✓ 流式 × Checkpointer 会话：追问改写 + 完整规划 + 逐 token 流式共存")
 
 
 if __name__ == "__main__":

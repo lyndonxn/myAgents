@@ -629,11 +629,13 @@ class TaskRunnerTests(unittest.TestCase):
         payload = handler._answer_payload(answer)
         metrics = payload["metrics"]
         # W1：顶层新增 sources_detail 键（与 sources 下标对应的结构化详情，加法扩展）；旧键不变
+        # spec/09 T-010：再加 pending_clarification 键（LangGraph 澄清挂起载荷，legacy 恒空 dict）
         self.assertEqual(
             set(payload),
-            {"answer", "error", "sources", "sources_detail", "plan", "metrics"},
-            "payload 顶层键不变（W1 加 sources_detail）",
+            {"answer", "error", "sources", "sources_detail", "plan", "metrics", "pending_clarification"},
+            "payload 顶层键不变（W1 加 sources_detail；spec/09 加 pending_clarification）",
         )
+        self.assertEqual(payload["pending_clarification"], {}, "legacy 旧 answer 无挂起时为空 dict")
         self.assertEqual(payload["sources_detail"], [], "旧 answer 无详情时回退空表")
         self.assertEqual(metrics["citations_valid"], 1)
         self.assertEqual(metrics["citations_invalid"], 2)
