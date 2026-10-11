@@ -865,3 +865,11 @@ body{
 .cl-btn { border: 1px solid var(--blue-line); background: var(--blue-soft); color: var(--blue); border-radius: 10px; padding: 8px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .cl-btn:hover:not(:disabled) { background: var(--blue); color: #fff; }
 .cl-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ===== 答案内 GFM 表格（lib/markdown.ts renderTables） ===== */
+.md-table-wrap { overflow-x: auto; margin: 10px 0; border: 1px solid var(--line); border-radius: 10px; }
+.md-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.md-table th { background: var(--blue-soft); color: var(--ink); text-align: left; font-weight: 700; }
+.md-table th, .md-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.md-table tbody tr:last-child td { border-bottom: none; }
+.md-table tbody tr:hover td { background: var(--bg); }
