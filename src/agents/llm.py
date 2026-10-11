@@ -175,6 +175,90 @@ class LLMClient:
     def chat(self, messages: list[dict], **kwargs) -> ChatResult:
         return self._chat_audited(messages, **kwargs)
 
+    def chat_stream(self, messages: list[dict], on_token=None, **kwargs) -> ChatResult:
+        """流式 chat（OpenAI 兼容 SSE，spec/08 LG-2.1）。
+
+        on_token(text) 对每个增量 chunk 回调（回调异常吞掉——前端断连不影响生成）；
+        返回聚合后的完整 ChatResult。usage 依赖 stream_options.include_usage，
+        端点不支持时 token 计数为 0（成本记 0，如实降级）。
+        重试语义与 _chat 不同：仅在建立连接前可安全重试；一旦开始产出 token，
+        失败直接抛 LLMError（重试会导致内容重复）。
+        """
+        url = f"{self.base_url}/chat/completions"
+        payload: dict = {
+            "model": kwargs.get("model") or self.config.llm_chat_model,
+            "messages": messages,
+            "temperature": kwargs.get("temperature") if kwargs.get("temperature") is not None else self.config.llm_temperature,
+            "max_tokens": kwargs.get("max_tokens") or self.config.llm_max_tokens,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+
+        t0 = time.monotonic()
+        last_err: Exception | None = None
+        for attempt in range(self.config.llm_max_retries):
+            try:
+                resp = requests.post(
+                    url,
+                    headers=self._request_headers(),
+                    json=payload,
+                    timeout=self.config.llm_timeout,
+                    stream=True,
+                )
+                if resp.status_code == 429:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+            except Exception as e:  # noqa: BLE001 - 连接期失败可安全重试
+                last_err = e
+                time.sleep(1.0 * (attempt + 1))
+                continue
+
+            parts: list[str] = []
+            usage: dict = {}
+            try:
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("usage"):
+                        usage = obj["usage"]
+                    choices = obj.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = (choices[0].get("delta") or {}).get("content") or ""
+                    if delta:
+                        parts.append(delta)
+                        if on_token is not None:
+                            try:
+                                on_token(delta)
+                            except Exception:  # noqa: BLE001 - 回调（前端断连等）不影响生成
+                                pass
+            except Exception as e:  # noqa: BLE001 - 已产出 token，不可安全重试
+                self._audit_llm(ok=False, latency_s=time.monotonic() - t0, error_type=type(e).__name__)
+                raise LLMError(f"LLM 流式读取中断（已产出 {len(parts)} 个 chunk，不可重试）: {e}") from e
+
+            latency = time.monotonic() - t0
+            result = ChatResult(
+                text="".join(parts).strip(),
+                prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                completion_tokens=int(usage.get("completion_tokens", 0)),
+                latency_s=latency,
+                raw={"stream": True},
+            )
+            self._audit_llm(
+                ok=True, latency_s=latency,
+                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+            )
+            return result
+        raise LLMError(f"LLM 流式请求失败（重试 {self.config.llm_max_retries} 次后）: {last_err}")
+
     def chat_json(self, messages: list[dict], **kwargs) -> object:
         """要求 JSON 输出并稳健解析；解析失败走修复轮，耗尽后抛 LLMError。
 

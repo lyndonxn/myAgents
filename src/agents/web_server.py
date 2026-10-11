@@ -697,16 +697,36 @@ class Handler(BaseHTTPRequestHandler):
             emit_stage("规划与检索")
             try:
                 with self.lock:
-                    self.agent.memory = self.store.memory(session_id)
-                    answer = self.agent.ask(  # S4：长期记忆按会话读写；G3：remember/allow_web 请求级许可
-                        question, session_id=session_id, remember=remember, allow_web=allow_web,
-                        on_stage=emit_stage,  # W1：阶段回调异常在 ask 内部吞掉，不影响生成
-                    )
+                    if self.agent.config.engine == "langgraph":
+                        # LangGraph 引擎（spec/08 LG-2.1）：真 token 流——generate 节点经
+                        # get_stream_writer 产出 delta 事件，边生成边下发；会话状态走
+                        # Checkpointer（thread_id=session_id），不写 legacy SessionMemory。
+                        from .agent_graph.runner import stream_graph_ask
+
+                        answer = None
+                        for ev in stream_graph_ask(
+                            self.agent, question=question, session_id=session_id,
+                            remember=remember, allow_web=allow_web, on_stage=emit_stage,
+                        ):
+                            if ev.get("event") == "_result":
+                                answer = ev["answer"]
+                            else:
+                                emit(ev["event"], **{k: v for k, v in ev.items() if k != "event"})
+                        if answer is None:
+                            raise RuntimeError("流式图引擎未返回结果")
+                    else:
+                        self.agent.memory = self.store.memory(session_id)
+                        answer = self.agent.ask(  # S4：长期记忆按会话读写；G3：remember/allow_web 请求级许可
+                            question, session_id=session_id, remember=remember, allow_web=allow_web,
+                            on_stage=emit_stage,  # W1：阶段回调异常在 ask 内部吞掉，不影响生成
+                        )
                 response = self._persist_answer(session_id, workspace["id"], question, answer)
                 emit("meta", session_id=session_id, message_id=response["message_id"], sources=response["sources"], sources_detail=response.get("sources_detail", []), plan=response["plan"], metrics=response["metrics"])
-                text = response["answer"]
-                for start in range(0, len(text), 24):
-                    emit("delta", text=text[start:start + 24])
+                if self.agent.config.engine != "langgraph":
+                    # legacy：ask 完成后把整段答案按 24 字符切块下发（图引擎的 delta 已实时流出）
+                    text = response["answer"]
+                    for start in range(0, len(text), 24):
+                        emit("delta", text=text[start:start + 24])
                 emit("done", error=response["error"])
                 # W3：追问建议（LLM 生成）。放在 done 之后：不拖慢正文与操作行的呈现；
                 # 生成失败/未配置时静默省略该事件，前端隐藏追问区。

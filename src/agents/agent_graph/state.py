@@ -15,6 +15,12 @@ from ..retriever import RetrievedChunk
 from ..vector_store import SearchHit
 
 
+def _first_error(current: str, new: str) -> str:
+    """error 键归并（C5）：向量/BM25 并行分支同时失败时取首个错误，
+    避免 InvalidUpdateError 让错误处理自身崩溃（T-008 回归实测抓出）。"""
+    return current or new
+
+
 class GraphState(TypedDict, total=False):
     """问答图的状态（total=False：全部字段可选，节点按需读写）。
 
@@ -54,5 +60,5 @@ class GraphState(TypedDict, total=False):
 
     # ---- 计数与指标 ----
     llm_call_count: int           # 检索/改写阶段的 LLM 调用数（合成由 runner 按 step 计 1）
-    error: str
+    error: Annotated[str, _first_error]
     node_metrics: Annotated[list[dict], operator.add]  # 各节点耗时（Phase 2 接 benchmark）

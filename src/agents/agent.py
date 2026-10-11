@@ -162,6 +162,9 @@ class Answer:
     # LangGraph 引擎（spec/08 LG-1.3）：图挂起等待澄清时的 interrupt 载荷
     #（type/question/message）；空 dict = 无挂起。新增字段带默认值，向后兼容。
     pending_clarification: dict = field(default_factory=dict)
+    # LangGraph 引擎（spec/08 LG-2.2）：各节点耗时（node/node_name+duration_ms），
+    # 供成本/延迟按节点归因；legacy 引擎恒为空表。
+    node_metrics: list = field(default_factory=list)
     total_latency_s: float = 0.0
     llm_calls: int = 0
     prompt_tokens: int = 0
@@ -869,9 +872,10 @@ class Agent:
                 for step in answer.steps[base:]:
                     print(f"  · {step.display()}")
 
-    def _synthesize(
+    def _synthesis_messages(
         self, question: str, plan: Plan, steps: list[StepResult], history_text: str = "", extra_hint: str = ""
-    ) -> str:
+    ) -> list[dict]:
+        """组装合成提示词（_synthesize 与 synthesize_stream 共用，避免提示词双写）。"""
         # 组装各成功步骤的输出作为生成上下文；来源编号即 sources 收集顺序，
         # 正文 [n] 引用的合法性由 ask 层按 len(sources) 校验（S3）。
         context_parts: list[str] = []
@@ -898,13 +902,38 @@ class Agent:
             + f"\n\n用户问题：{question}"
             + extra_hint
         )
+        return [
+            {"role": "system", "content": SYNTHESIS_SYSTEM},
+            {"role": "user", "content": user},
+        ]
+
+    def _synthesize(
+        self, question: str, plan: Plan, steps: list[StepResult], history_text: str = "", extra_hint: str = ""
+    ) -> str:
         result = self.llm.chat(
-            [
-                {"role": "system", "content": SYNTHESIS_SYSTEM},
-                {"role": "user", "content": user},
-            ],
+            self._synthesis_messages(question, plan, steps, history_text=history_text, extra_hint=extra_hint),
             max_tokens=self.config.synthesis_max_tokens,  # G9：输出预算收紧（默认 1024）
         )
+        self._accumulate_usage(result)
+        return result.text
+
+    def synthesize_stream(
+        self,
+        question: str,
+        plan: Plan,
+        steps: list[StepResult],
+        history_text: str = "",
+        extra_hint: str = "",
+        on_token: "Callable[[str], None] | None" = None,
+    ) -> str:
+        """流式合成（spec/08 LG-2.1）：提供 on_token 且 LLM 支持流式时走 chat_stream，
+        否则回退非流式 chat——调用方（图 generate 节点）以 streaming 上下文为闸门，
+        测试用假 LLM 在非流式路径下不会触及流式实现。"""
+        messages = self._synthesis_messages(question, plan, steps, history_text=history_text, extra_hint=extra_hint)
+        if on_token is not None and hasattr(type(self.llm), "chat_stream"):
+            result = self.llm.chat_stream(messages, on_token=on_token, max_tokens=self.config.synthesis_max_tokens)
+        else:
+            result = self.llm.chat(messages, max_tokens=self.config.synthesis_max_tokens)
         self._accumulate_usage(result)
         return result.text
 

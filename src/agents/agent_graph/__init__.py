@@ -10,6 +10,7 @@ _LAZY_EXPORTS = {
     "build_retrieval_subgraph": ".retrieval_subgraph",
     "build_answer_graph": ".runner",
     "run_graph_ask": ".runner",
+    "stream_graph_ask": ".runner",
 }
 
 

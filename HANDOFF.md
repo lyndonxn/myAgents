@@ -15,7 +15,16 @@
 - 测试：`tests/test_agent_graph.py` 10 项全离线（FakeLLM）；全套 **207 绿**（基线 197 + 10）。评测基线快照：`benchmark/results-lg-phase0-baseline-2026-10-11.txt`（vault 26 题 retrieval-only：文件命中 96.2%/章节 80.8%，BGE 本地向量 + Cross-Encoder 精排口径——venv 已装 sentence-transformers）。
 - 独立验收遗留（非阻塞）：`_build_chunks` 与 `retrieve()` 的 10 行结果组装循环轻度重复（打包代码，非检索逻辑）；~~真实 LLM 端到端未跑~~ **真实 LLM 冒烟已通过（2026-10-11 19:11，用户本人在 Web UI 发起）：`ask[langgraph] q=什么是 harness 4.8s ¥0.0013 ok`，vault 索引（295 父块/636 叶子）+ DeepSeek 云端全链路走通**。运行期发现（既有环境问题，非本切片引入）：本机 `bge-reranker-base` 模型文件缺失 → Cross-Encoder 精排优雅降级为无精排（legacy 同口径）。
 
-**Phase 1 已完成（2026-10-11，LG-ACC-004/005/006 全绿，待独立验收）**——规格 `spec/langgraph-phase1.md`：
+**Phase 2 已完成免费档（2026-10-11，LG-ACC-007/009 + LG-ACC-008 免费部分，待独立验收）**——规格 `spec/langgraph-phase2.md`：
+
+- 真 token 流式（LG-2.1）：`llm.chat_stream`（OpenAI SSE，include_usage）+ `synthesize_stream`（`_synthesis_messages` 提示词单点重构，`_synthesize` 行为不变）+ generate 节点 `streaming` 闸门 + `get_stream_writer` 自定义事件 + `stream_graph_ask` 生成器（stream_mode=["custom","values"]）；`/api/ask_stream` 按 engine 分支——图引擎逐 token 下发，legacy 原 24 字符切块不变。
+- 节点指标（LG-2.2）：`Answer.node_metrics` 新字段（9 节点 duration_ms）；web payload 未加键（契约测试锁定键集，偏差 1）。
+- A/B 框架（LG-2.3）：benchmark `--engine` 参数 + retrieval-only 按 engine 选路径；**免费档实测（vault 26 题）：命中率两侧完全一致（文件 96.2%/章节 80.8%），图路径延迟更低（p50 25ms vs 28ms，并行扇出收益）**，快照 `benchmark/results-lg-phase2-ab-retrieval-2026-10-11-{legacy,langgraph}.txt`。
+- 回归抓出并修复一个真 bug：并行分支同时失败时都写 error → InvalidUpdateError（错误处理自身崩溃）→ `error` 键加 `_first_error` 归并 reducer（C5 增强）。
+- 测试：`tests/test_agent_graph_stream.py` 4 项 + 全套 **218 绿**（214+4）；T4 契约测试显式锁定 `--engine legacy`（对环境 runtime.json 免疫）。
+- 待决（D2）：付费完整 A/B（~100 题 × 2 引擎，预估 < ¥1）→ LG-2.4 报告 + LG-2.5 简历/README 回写。
+
+**Phase 1 已完成（2026-10-11，LG-ACC-004/005/006 全绿，独立验收 4/4 pass）**——规格 `spec/langgraph-phase1.md`：
 
 - `graph.checkpoint_db`（默认 data_dir/checkpoints.sqlite）+ `graph.clarify_on_miss`（默认 false）配置；同步 `SqliteSaver`（langgraph-checkpoint-sqlite 3.1.1；spec 原文 Async——同步契约按接缝调整，偏差已登记）。
 - 会话续接：session_id → thread_id，`history` 存 checkpoint（**不双写 legacy SessionMemory**）；追问改写复用 `planner.rewrite_query`（LG-1.2/1.5）；跨实例续接测试通过（新实例改写提示词可见上轮历史）。

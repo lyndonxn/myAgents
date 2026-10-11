@@ -136,8 +136,13 @@ def route_clarify(state) -> str:
     return "retrieve" if state.get("pending_requery") else "generate"
 
 
-def make_generate_node(agent, on_stage=None):
-    """合成节点：把检索结果组装为与 legacy 工具同构的单步输出，复用 _synthesize。"""
+def make_generate_node(agent, on_stage=None, streaming: bool = False):
+    """合成节点：把检索结果组装为与 legacy 工具同构的单步输出，复用 _synthesize。
+
+    streaming=True（仅 stream_graph_ask 构建）时经 get_stream_writer 把 token
+    以 {"event": "delta"} 自定义事件写出；非流式上下文该调用抛 RuntimeError，
+    安全回退 on_token=None → 非流式 chat（invoke 路径零行为变化）。
+    """
 
     def generate(state):
         if state.get("error"):
@@ -176,10 +181,21 @@ def make_generate_node(agent, on_stage=None):
             )
             # 知识库零命中提示与 legacy ask 口径一致；澄清被跳过/未命中时同样生效
             hint = _KB_MISS_HINT if not chunks else ""
-            draft = agent._synthesize(
+            on_token = None
+            if streaming:
+                try:
+                    from langgraph.config import get_stream_writer
+
+                    writer = get_stream_writer()
+                except Exception:  # noqa: BLE001 - 非 stream 上下文回退非流式
+                    writer = None
+                if callable(writer):
+                    on_token = lambda t: writer({"event": "delta", "text": t})  # noqa: E731
+            draft = agent.synthesize_stream(
                 question, plan, [step],
                 history_text=state.get("history_text", ""),
                 extra_hint=hint,
+                on_token=on_token,
             )
             return {
                 "draft": draft,

@@ -163,13 +163,27 @@ def run_retrieval_only(
         agent = Agent(config)
         agent.load_index()
     k = top_k or config.top_k
+    # spec/08 LG-2.3：engine=langgraph 时检索经图子图执行（向量+BM25 并行扇出→融合→父块→精排），
+    # 与 legacy Retriever.retrieve 形成 A/B 对照（C6：同一冻结的检索引擎，两条执行路径）
+    via_graph = getattr(config, "engine", "legacy") == "langgraph"
+    subgraph = None
+    if via_graph:
+        from agents.agent_graph import build_retrieval_subgraph
 
-    print(f"检索命中检查（top_k={k}，不调用 LLM）：")
+        subgraph = build_retrieval_subgraph(agent.retriever)
+
+    print(f"检索命中检查（top_k={k}，不调用 LLM，路径={'langgraph 子图' if via_graph else 'legacy 管线'}）：")
     rows = []
     for item in questions:
         qid = item["id"]
         t0 = time.monotonic()
-        hits = agent.retriever.retrieve(item["question"], top_k=k)
+        if via_graph:
+            final = subgraph.invoke({"question": item["question"], "node_metrics": []})
+            hits = final.get("chunks") or []
+            if final.get("error"):
+                raise RuntimeError(f"图检索失败 [{qid}]: {final['error']}")
+        else:
+            hits = agent.retriever.retrieve(item["question"], top_k=k)
         latency = time.monotonic() - t0
         retrieved_files = [h.file for h in hits]
         src = source_hit(retrieved_files, item.get("expected_files", []))
@@ -221,6 +235,8 @@ def main() -> None:
                         help="题库 JSON 路径（默认 benchmark/questions.json）")
     parser.add_argument("--judge", action="store_true",
                         help="用 LLM 评审每题答案的证据支撑度（付费，默认关闭）")
+    parser.add_argument("--engine", choices=["legacy", "langgraph"], default=None,
+                        help="编排引擎覆盖（spec/08 LG-2.3 A/B；默认取配置；retrieval-only 时决定检索执行路径）")
     args = parser.parse_args()
 
     questions_path = Path(args.questions).expanduser() if args.questions else ROOT / "questions.json"
@@ -230,6 +246,8 @@ def main() -> None:
         config._raw.setdefault("retrieval", {})["rerank"] = args.rerank
     if args.multi_query:
         config._raw.setdefault("retrieval", {})["multi_query"] = True
+    if args.engine:
+        config._raw["engine"] = args.engine
     if args.retrieval_only:
         agent = build_benchmark_agent(config, kb=args.kb)
         run_retrieval_only(questions, config, top_k=args.top_k, agent=agent)

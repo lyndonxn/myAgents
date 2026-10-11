@@ -141,8 +141,8 @@ class BenchmarkSampleTests(unittest.TestCase):
         try:
             # 带 --kb：只调用 build_index(persist=False) 内存构建，绝不 load_index
             build_calls, load_calls = run_main(
-                ["run_benchmark.py", "--retrieval-only", "--kb", str(SAMPLES_KB),
-                 "--questions", str(QUESTIONS_SAMPLE)]
+                ["run_benchmark.py", "--retrieval-only", "--engine", "legacy",
+                 "--kb", str(SAMPLES_KB), "--questions", str(QUESTIONS_SAMPLE)]
             )
             self.assertEqual(build_calls, [False], f"--kb 应只以 persist=False 构建，实际 {build_calls}")
             self.assertEqual(load_calls, 0, "--kb 路径不得调用 load_index（读盘/可能重建写盘）")
@@ -153,7 +153,7 @@ class BenchmarkSampleTests(unittest.TestCase):
             )
 
             # 对照：不带 --kb 保持原行为（load_index 加载既有索引，不构建）
-            build_calls, load_calls = run_main(["run_benchmark.py", "--retrieval-only"])
+            build_calls, load_calls = run_main(["run_benchmark.py", "--retrieval-only", "--engine", "legacy"])
             self.assertEqual(build_calls, [])
             self.assertEqual(load_calls, 1, f"默认路径应 load_index 且不构建，实际 build={build_calls} load={load_calls}")
             self.assertGreater(len(queries_seen), 0)
