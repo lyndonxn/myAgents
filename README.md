@@ -50,7 +50,20 @@ MYAGENTS 可以把 Markdown 文档目录变成可检索、可连续对话的知�
 | G11 | 本地 OpenAI 兼容端点、空 API Key、运行期禁用联网 | `llm.mode=local`、`scripts/prepare_offline.py` |
 | S1–S8 | Next.js 静态导出、会话/流式聊天/答案卡/图片输入/任务面板/设置与收尾 | `frontend/`、`frontend/out/` |
 
-明确延期或不在本项目范围：付费 100 题云端对比（需单独授权）、多 worker/锁拆分、coverage.py 覆盖率、认证/多用户、文档级 ACL、增量索引，以及重写 Agent 框架。
+明确延期或不在本项目范围：付费 100 题云端对比（需单独授权）、多 worker/锁拆分、coverage.py 覆盖率、认证/多用户、文档级 ACL、增量索引，以及重写 Agent 框架（2026-10 起以可选 `engine: langgraph` 形式部分落地，自研引擎仍为默认，见下节）。
+
+## 2026-10 LangGraph 编排升级（第一轮已交付）
+
+在保留自研引擎为默认（`engine: legacy`）的前提下，引入 LangGraph 1.0 作为**可选编排引擎**（`engine: langgraph`；可选依赖 `requirements-langgraph.txt`，未安装时 legacy 零影响）：
+
+| 阶段 | 交付 | 验收 |
+| --- | --- | --- |
+| Phase 0 | 最小图打通：engine 开关、混合检索封装为并行扇出的检索子图、条件边显式错误路由 | LG-ACC-001~003 |
+| Phase 1 | SqliteSaver 会话持久化（thread=会话，不双写 SessionMemory）、追问改写、interrupt 澄清（轮上限 1）、崩溃恢复（已完成节点不重跑） | LG-ACC-004~006 |
+| Phase 2 | 真 token 级流式（`/api/ask_stream` 图引擎分支）、节点级耗时指标（`Answer.node_metrics`）、benchmark `--engine` 双引擎 A/B | LG-ACC-007~009 |
+
+- **219 项离线测试全绿**（迁移前 197）；每阶段独立验收子代理通过；详细偏差与边界见 [`spec/langgraph-phase0.md`](spec/langgraph-phase0.md)、[`spec/langgraph-phase1.md`](spec/langgraph-phase1.md)、[`spec/langgraph-phase2.md`](spec/langgraph-phase2.md)。
+- **同集 A/B（同为 deepseek-chat、同库同题）**：检索命中率逐题一致（26 题文件命中 96.2%/章节 80.8%，图路径 p50 25ms vs 28ms）；5 题冒烟完整链路质量零回退，单发问答 p50 12.7s→3.8s、成本 -54%。报告见知识库《MyAgents LangGraph 迁移 A/B（2026-10-11）》，双侧原始数据在 [`benchmark/results-lg-phase2-ab-*`](benchmark/)。
 
 ## Web 界面
 
