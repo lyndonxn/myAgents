@@ -9,7 +9,8 @@
 - **T-010 澄清端点（4f6a6f3）**：`/api/clarify`（引擎/428/409 NO_PENDING 守卫，守卫与恢复同锁消除 TOCTOU，MAX_QUESTION_LEN 上限）；`pending_clarification` 入 payload（ACC-T1-03 契约加法演进）；流式 `clarify` 事件。
 - **T-011 ReAct 子图（4f6a6f3）**：plan/execute/reflect 三节点**整体复用** Planner/Executor/_reflect_and_extend（零语义复制，验收比对确认）；G9 快路径条件路由单发分支；generate 双路汇合；多轮问题走完整规划（legacy 同口径，修正 Phase 0/1 的"永远单发"简化）。
 - **验收修正（230 测试绿）**：独立验收抓出 `llm_call_count`/`node_metrics` 的 operator.add 通道随 Checkpointer 跨轮污染 + 子图回写双条目（3 轮会话 llm_calls 1/4/6 膨胀）→ **计数/耗时移出图状态改 build 级持有者（run_ctx）**，跨轮零污染（回归：3 轮 1/4/4）；/api/clarify TOCTOU + 长度守卫修复。
-- 待决：ReAct 付费 A/B（5 题口径框架就绪）、前端澄清卡片、langgraph 升级前 serde 复核。
+- **后补两项（2026-10-11 深夜，ca455f5 直提 main）**：① ReAct 多步口径付费 A/B（用户授权 5 题）——5 道多段式问题（62-69 字符）两侧均走完整规划：**质量逐题完全一致（kw/src/幻觉全同），图引擎 p50 14.9s vs 19.5s（-24%）、总延迟 71.5s vs 111.5s（-36%，legacy v04 单题 37s 长尾消除）、成本 -8%**；题集与双侧数据入库，报告已追加多步口径节。② 前端澄清卡片——clarify API 封装 + Chat CLARIFY 卡片（回车提交）+ page 事件接线（clarify 事件→卡片→/api/clarify→非流式出卡）；npm build 通过、产物含卡片；注意：澄清触发条件（真零命中）在非空索引下罕见自然发生，属 Phase 2 遗留的分数阈值决策。
+- 待决：langgraph 升级前 serde 复核；Agentic RL / GraphRAG（Later）。
 
 计划与全局约束见工作区 harness `~/.zcode/workspace/default/spec/08-langgraph-upgrade-plan.md`（T-006~008）；本仓库侧验收规格 `spec/langgraph-phase0.md`。
 
