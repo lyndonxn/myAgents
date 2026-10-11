@@ -52,7 +52,6 @@ class GraphState(TypedDict, total=False):
     # ---- ReAct 多步路径（spec/09 T-011） ----
     fast_path: bool               # G9 快路径判定结果（真 → 路由单发分支）
     steps: list                   # 多步路径的全部 StepResult（execute/reflect 产出）
-    reflect_llm_calls: int        # 反思阶段内部 LLM 调用数（legacy _reflect_and_extend 口径）
 
     # ---- 生成与校验 ----
     plan: Any                     # 展示用 Plan（单步检索，与 legacy 答案结构对齐）
@@ -63,9 +62,8 @@ class GraphState(TypedDict, total=False):
     citations_valid: int
     citations_invalid: int
 
-    # ---- 计数与指标 ----
-    # LLM 调用数：各节点返回增量，operator.add 归并（last-value 会互相覆盖——
-    # route_entry 的改写计数曾被 plan_node 覆盖丢失，T-011 回归实测抓出）
-    llm_call_count: Annotated[int, operator.add]
+    # ---- 错误 ----
+    # LLM 调用数与节点耗时**不在 state 里**（T-011 独立验收抓出：operator.add 通道
+    # 随 Checkpointer 跨 invoke 持久 → 第 3 轮起计数膨胀；子图回写致父条目重复）。
+    # 两者改由 build_answer_graph 的每次构建闭包（ctx）持有，见 nodes.timed。
     error: Annotated[str, _first_error]
-    node_metrics: Annotated[list[dict], operator.add]  # 各节点耗时（Phase 2 接 benchmark）

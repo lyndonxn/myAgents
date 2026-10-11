@@ -3,7 +3,13 @@
 分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**已推送**（2026-09-05 用户授权，`9e6791f..a7489b9 main -> main`，共 41 提交含 W1–W8 与 Next.js 迁移全部工作；推送前已做密钥快扫）。
 规格：`spec/agent-core-modules.md`（S 阶段 + T 阶段）。契约：`AGENTS.md`。
 
-## 进行中：LangGraph 编排升级（2026-10-11 开工，**Phase 0-2 全部 DONE 并已合入 main**：`03bd446..0a68bc1` fast-forward，219 测试合并后复验全绿；分支 `feat/langgraph-orchestration` 保留）
+## 进行中：第二轮（spec/09：MCP vault-mcp + LangGraph Phase 3）——**三切片 DONE，独立验收 7/7 pass，分支 `feat/mcp-vault-phase3` 已推送待合并**（230 测试绿）
+
+- **T-009 vault-mcp（18d6987）**：按知识库《MCP Server 开发实战》设计实现三工具本地 stdio Server——`search_notes`（复用混合检索，零复制）/ `get_decisions`（决策记录，单篇 4000 字上限）/ `log_digestion`（C7：note_path 越界拒绝【验收实测 10 种路径变体含 symlink】+ 唯一 digest 白名单文件 + 审计事件）。FastMCP 4.1.0 opt-in（requirements-mcp.txt）；入口 `PYTHONPATH=src python -m agents.mcp_server`（stdio 握手经子协议冒烟验证）。
+- **T-010 澄清端点（4f6a6f3）**：`/api/clarify`（引擎/428/409 NO_PENDING 守卫，守卫与恢复同锁消除 TOCTOU，MAX_QUESTION_LEN 上限）；`pending_clarification` 入 payload（ACC-T1-03 契约加法演进）；流式 `clarify` 事件。
+- **T-011 ReAct 子图（4f6a6f3）**：plan/execute/reflect 三节点**整体复用** Planner/Executor/_reflect_and_extend（零语义复制，验收比对确认）；G9 快路径条件路由单发分支；generate 双路汇合；多轮问题走完整规划（legacy 同口径，修正 Phase 0/1 的"永远单发"简化）。
+- **验收修正（230 测试绿）**：独立验收抓出 `llm_call_count`/`node_metrics` 的 operator.add 通道随 Checkpointer 跨轮污染 + 子图回写双条目（3 轮会话 llm_calls 1/4/6 膨胀）→ **计数/耗时移出图状态改 build 级持有者（run_ctx）**，跨轮零污染（回归：3 轮 1/4/4）；/api/clarify TOCTOU + 长度守卫修复。
+- 待决：ReAct 付费 A/B（5 题口径框架就绪）、前端澄清卡片、langgraph 升级前 serde 复核。
 
 计划与全局约束见工作区 harness `~/.zcode/workspace/default/spec/08-langgraph-upgrade-plan.md`（T-006~008）；本仓库侧验收规格 `spec/langgraph-phase0.md`。
 

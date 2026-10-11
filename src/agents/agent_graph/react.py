@@ -23,12 +23,12 @@ from ..tools import describe_tools
 LOG = get_logger("agent_graph_react")
 
 
-def make_react_nodes(agent, run_tools: dict, effective_allow_web: bool) -> dict:
+def make_react_nodes(agent, run_tools: dict, effective_allow_web: bool, counters: dict | None = None) -> dict:
     """构建共享 Planner/Executor 闭包的 ReAct 三节点。
 
     Executor/Planner 生命周期 = 单次问答（build_answer_graph 每次 ask 重建图），
     与 legacy"同一 Executor 实例跨 execute() 调用累积步骤结果"的契约一致，
-    使 @step:N 占位符在反思补步间照常工作。
+    使 @step:N 占位符在反思补步间照常工作。counters 为 build 级 LLM 调用持有者。
     """
     executor = Executor(agent.config, run_tools, agent._ctx, web_fallback=effective_allow_web)
     planner = Planner(agent.config, agent.llm)
@@ -49,16 +49,18 @@ def make_react_nodes(agent, run_tools: dict, effective_allow_web: bool) -> dict:
                 plan_summary="快路径：单步知识库检索",
                 steps=[PlanStep(action="search_knowledge_base", input={"query": question}, step_id=1)],
             )
-            return {"plan": plan, "fast_path": True, "llm_call_count": 0}
+            return {"plan": plan, "fast_path": True}
         try:
             plan = planner.plan(question, describe_tools(run_tools), history_text=history_text)
         except Exception as exc:  # noqa: BLE001 - C5：规划失败显式入 state（legacy 为整体 error）
             return {"error": f"plan: {type(exc).__name__}: {exc}"}
+        if counters is not None:
+            counters["llm_calls"] += 1  # 规划 1 次
         # 规划失败回退的查询兜底（legacy ask 同款）：退化计划用改写后的独立查询
         q_work = state.get("search_query") or question
         if plan.fallback and q_work != question and plan.steps:
             plan.steps[0].input["query"] = q_work
-        return {"plan": plan, "fast_path": False, "llm_call_count": 1}
+        return {"plan": plan, "fast_path": False}
 
     def route_after_plan(state) -> str:
         """快 → 单发分支（retrieve 子图）；复杂 → 多步路径（execute）；错误 → error_node。"""
@@ -91,10 +93,11 @@ def make_react_nodes(agent, run_tools: dict, effective_allow_web: bool) -> dict:
                 state["question"], state.get("history_text", ""),
                 tools=run_tools,
             )
+            if counters is not None:
+                counters["llm_calls"] += scratch.llm_calls  # 反思内部自计的调用数（legacy 口径）
             return {
                 "plan": scratch.plan,
                 "steps": scratch.steps,
-                "reflect_llm_calls": scratch.llm_calls,
             }
         except Exception as exc:  # noqa: BLE001 - C5
             return {"error": f"reflect: {type(exc).__name__}: {exc}"}

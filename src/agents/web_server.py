@@ -686,12 +686,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
             from .agent_graph.runner import get_pending_clarification
 
-            pending = get_pending_clarification(self.agent, session_id)
+            if len(clarification) > MAX_QUESTION_LEN:
+                self._send_json({"error": f"澄清内容过长（上限 {MAX_QUESTION_LEN} 字符）"}, 400)
+                return
+            # 守卫与恢复同锁（T-011 验收修正）：消除"检查挂起"与"恢复"之间的 TOCTOU 窗口，
+            # 并发双 clarify 在此串行化，后者自然退化为普通提问语义。
+            pending = None
+            with self.lock:
+                pending = get_pending_clarification(self.agent, session_id)
+                if pending:
+                    answer = self.agent.ask(clarification, session_id=session_id)
             if not pending:
                 self._send_json({"error": "当前会话没有待澄清的提问", "code": "NO_PENDING_CLARIFICATION"}, 409)
                 return
-            with self.lock:
-                answer = self.agent.ask(clarification, session_id=session_id)  # 同会话下一问即澄清语义
             response = self._persist_answer(session_id, workspace["id"], clarification, answer)
             self._send_json({"question": clarification, "session_id": session_id, **response})
             return

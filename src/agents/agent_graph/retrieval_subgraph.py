@@ -41,8 +41,11 @@ def _build_chunks(retriever: Retriever, candidates: list[dict], top_k: int) -> l
     return results
 
 
-def build_retrieval_subgraph(retriever: Retriever):
-    """构建检索子图（编译后作为主图节点使用，随主图 checkpointer 管理——Phase 1）。"""
+def build_retrieval_subgraph(retriever: Retriever, metrics: list | None = None):
+    """构建检索子图（编译后作为主图节点使用，随主图 checkpointer 管理——Phase 1）。
+
+    metrics：build 级耗时持有者（不进图状态，见 nodes.timed 说明）。
+    """
     from langgraph.graph import StateGraph, START, END
 
     def vector_recall(state: GraphState):
@@ -102,11 +105,11 @@ def build_retrieval_subgraph(retriever: Retriever):
             return {"error": f"rerank: {type(exc).__name__}: {exc}"}
 
     subgraph = StateGraph(GraphState)
-    subgraph.add_node("vector_recall", timed("vector_recall", vector_recall))
-    subgraph.add_node("bm25_recall", timed("bm25_recall", bm25_recall))
-    subgraph.add_node("fuse", timed("fuse", fuse))
-    subgraph.add_node("expand_parents", timed("expand_parents", expand_parents))
-    subgraph.add_node("rerank", timed("rerank", rerank))
+    subgraph.add_node("vector_recall", timed("vector_recall", vector_recall, metrics))
+    subgraph.add_node("bm25_recall", timed("bm25_recall", bm25_recall, metrics))
+    subgraph.add_node("fuse", timed("fuse", fuse, metrics))
+    subgraph.add_node("expand_parents", timed("expand_parents", expand_parents, metrics))
+    subgraph.add_node("rerank", timed("rerank", rerank, metrics))
     # 两路召回并行扇出（图编排的结构性收益），fuse 汇聚
     subgraph.add_edge(START, "vector_recall")
     subgraph.add_edge(START, "bm25_recall")

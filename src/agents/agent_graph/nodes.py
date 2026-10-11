@@ -42,25 +42,27 @@ def format_history(history: list[dict]) -> str:
     return "\n".join(f"用户：{t.get('q', '')}\n助手：{t.get('a', '')}" for t in history)
 
 
-def timed(name: str, fn):
-    """节点耗时包装（LG-0.2）：把执行时长记入 state["node_metrics"]。
+def timed(name: str, fn, metrics: list | None = None):
+    """节点耗时包装（LG-2.2）：执行时长追加到 metrics 持有者（build 每次问答重建，
+    不进图状态——T-011 验收修正：state 里的 add 通道会跨 Checkpointer 轮次污染）。
 
-    state 中该键带 operator.add reducer，节点返回 {"node_metrics": [单条]} 即追加；
-    正常与失败路径都记录（失败时长同样有归因价值）。
+    metrics=None 时（无持有者场景）只执行不记录。
     """
 
     @functools.wraps(fn)
     def wrapper(state):
         t0 = time.monotonic()
         update = fn(state) or {}
-        return {**update, "node_metrics": [{"node": name, "duration_ms": round((time.monotonic() - t0) * 1000, 2)}]}
+        if metrics is not None:
+            metrics.append({"node": name, "duration_ms": round((time.monotonic() - t0) * 1000, 2)})
+        return update
 
     return wrapper
 
 
 # ---------------- 主图节点 ----------------
 
-def make_route_entry(agent, on_stage=None):
+def make_route_entry(agent, on_stage=None, counters: dict | None = None):
     """入口节点：问题规范化 + 会话历史追问改写（LG-1.5，复用 planner.rewrite_query）。"""
 
     def route_entry(state):
@@ -71,13 +73,13 @@ def make_route_entry(agent, on_stage=None):
         history = state.get("history") or []
         history_text = format_history(history)
         search_query = question
-        llm_calls = 0
+        if counters is not None and history_text:
+            counters["llm_calls"] += 1  # 追问改写 1 次
         if history_text:
             rewritten = rewrite_query(agent.llm, question, history_text)
             if rewritten and rewritten != question:
                 search_query = rewritten
-                llm_calls = 1
-        return {"question": question, "search_query": search_query, "history_text": history_text, "llm_call_count": llm_calls}
+        return {"question": question, "search_query": search_query, "history_text": history_text}
 
     return route_entry
 

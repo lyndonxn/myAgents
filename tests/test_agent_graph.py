@@ -129,7 +129,7 @@ class RetrievalSubgraphParityTests(unittest.TestCase):
         query = "RAG 检索增强生成"
         legacy = self.agent.retriever.retrieve(query)
         subgraph = build_retrieval_subgraph(self.agent.retriever)
-        final = subgraph.invoke({"question": query, "node_metrics": []})
+        final = subgraph.invoke({"question": query})
         graph_chunks = final["chunks"]
 
         self.assertEqual(len(legacy), len(graph_chunks))
@@ -176,22 +176,23 @@ class GraphEngineTests(unittest.TestCase):
         print("✓ 合成失败 → error_node 优雅终止（C5）")
 
     def test_node_metrics_recorded(self):
-        from agents.agent_graph import build_answer_graph
+        from agents.agent_graph import run_graph_ask
 
         agent = make_agent(self.config, FakeLLM(self.config))
-        graph = build_answer_graph(agent)
-        final = graph.invoke({"question": "什么是 RAG？", "node_metrics": []})
-        names = [m["node"] for m in final["node_metrics"]]
+        answer = run_graph_ask(agent, question="什么是 RAG？")
+        self.assertTrue(answer.ok, answer.error)
+        names = [m["node"] for m in answer.node_metrics]
         for expected in ("route_entry", "vector_recall", "bm25_recall", "fuse", "expand_parents", "rerank", "generate", "validate_citations"):
             self.assertIn(expected, names)
-        print("✓ 节点指标按节点记录（含并行召回分支）")
+        self.assertEqual(len(names), len(set(names)), "T-011 验收修正：metrics 持有者不应产生子图回写双条目")
+        print("✓ 节点指标按节点记录（无重复条目，含并行召回分支）")
 
     def test_empty_question_routes_to_error(self):
         from agents.agent_graph import build_answer_graph
 
         agent = make_agent(self.config, FakeLLM(self.config))
-        graph = build_answer_graph(agent)
-        final = graph.invoke({"question": "  ", "node_metrics": []})
+        graph, _run_ctx = build_answer_graph(agent)
+        final = graph.invoke({"question": "  "})
         self.assertTrue(final.get("error"))
         self.assertEqual(final.get("draft", ""), "")
         print("✓ 空问题 → error_node（不进检索）")

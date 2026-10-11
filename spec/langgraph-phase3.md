@@ -25,3 +25,12 @@
 3. 前端澄清卡片不在本切片（`/api/clarify` + 流式 `clarify` 事件已就绪，UI 另行切片）。
 4. ReAct 的付费 A/B 待用户授权（沿用 5 题口径框架）。
 5. checkpoint serde pickle 兜底对象新增 StepResult/Plan（既有偏差 5 的延伸，升级 langgraph 前统一复核）。
+
+## 独立验收结论与修正（2026-10-11）
+
+独立验收 **7/7 pass**（MCP 三条 + Phase 3 四条；stdio JSON-RPC 握手冒烟、C7 白名单 10 种路径变体、payload 契约演进、legacy 零改动均实证）。验收抓出并已修复：
+
+1. **llm_calls 跨轮累积**（本切片引入）：`llm_call_count` 的 operator.add 通道随 Checkpointer 跨 invoke 持久 → 3 轮会话计数 1/4/6 膨胀。修复：LLM 调用数与节点耗时**移出图状态**，改由 build 级闭包持有者（`run_ctx`）承载——跨轮零污染（回归测试：3 轮 1/4/4）。
+2. **node_metrics 双条目 + 跨轮累积**（Phase 2 遗留伪影）：检索子图回写父状态致 route_entry/plan_node 条目 ×2。修复：同上移出状态，并加"无重复条目"断言。
+3. `/api/clarify` TOCTOU（守卫在锁外）与澄清文本长度不受限 → 守卫移入 `self.lock` + `MAX_QUESTION_LEN` 上限。
+

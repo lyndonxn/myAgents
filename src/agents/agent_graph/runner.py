@@ -71,11 +71,11 @@ def _get_checkpointer(agent):
 
 
 def build_answer_graph(agent, on_stage=None, checkpointer=None, streaming: bool = False, allow_web=None):
-    """组装并编译主图（LG-0.5 显式条件边错误路由；streaming 仅 stream_graph_ask 置真）。
+    """组装并编译主图，返回 (compiled_app, run_ctx)。
 
-    v3（spec/09 T-011）：route_entry → plan_node 双分支——G9 快路径 → 单发分支
-    （检索并行子图 + 澄清）；复杂问题 → ReAct 多步路径（execute/reflect）。
-    两路在 generate 汇合，共享 validate/commit 尾段。
+    run_ctx = {"counters": {"llm_calls": int}, "metrics": [节点耗时]}——build 级闭包
+    持有者，生命周期 = 单次问答（T-011 验收修正：计数/耗时不进图状态，避免
+    operator.add 通道跨 Checkpointer 轮次污染与子图回写重复）。
     """
     from langgraph.graph import StateGraph, START, END
 
@@ -85,23 +85,26 @@ def build_answer_graph(agent, on_stage=None, checkpointer=None, streaming: bool 
     if agent.retriever is None:
         raise RuntimeError("检索器未初始化：请先加载/构建索引（agent.load_index()）")
 
+    counters = {"llm_calls": 0}
+    metrics: list = []
     effective_allow_web = agent.resolve_allow_web(allow_web)
     run_tools = agent._tools_for_run(effective_allow_web)
-    react = make_react_nodes(agent, run_tools, effective_allow_web)
+    react = make_react_nodes(agent, run_tools, effective_allow_web, counters)
 
     graph = StateGraph(GraphState)
-    graph.add_node("route_entry", timed("route_entry", make_route_entry(agent, on_stage)))
-    graph.add_node("plan_node", timed("plan_node", react["plan_node"]))
-    graph.add_node("retrieve", build_retrieval_subgraph(agent.retriever))
-    graph.add_node("clarify_check", timed("clarify_check", make_clarify_node(agent)))
-    graph.add_node("execute_node", timed("execute_node", react["execute_node"]))
-    graph.add_node("reflect_node", timed("reflect_node", react["reflect_node"]))
+    graph.add_node("route_entry", timed("route_entry", make_route_entry(agent, on_stage, counters), metrics))
+    graph.add_node("plan_node", timed("plan_node", react["plan_node"], metrics))
+    graph.add_node("retrieve", build_retrieval_subgraph(agent.retriever, metrics))
+    graph.add_node("clarify_check", timed("clarify_check", make_clarify_node(agent), metrics))
+    graph.add_node("execute_node", timed("execute_node", react["execute_node"], metrics))
+    graph.add_node("reflect_node", timed("reflect_node", react["reflect_node"], metrics))
     graph.add_node("generate", timed(
-        "generate", make_generate_node(agent, on_stage, streaming=streaming, web_allowed=effective_allow_web)
+        "generate", make_generate_node(agent, on_stage, streaming=streaming, web_allowed=effective_allow_web),
+        metrics,
     ))
-    graph.add_node("validate_citations", timed("validate_citations", make_validate_node(agent)))
-    graph.add_node("commit_turn", timed("commit_turn", commit_turn))
-    graph.add_node("error_node", timed("error_node", error_node))
+    graph.add_node("validate_citations", timed("validate_citations", make_validate_node(agent), metrics))
+    graph.add_node("commit_turn", timed("commit_turn", commit_turn, metrics))
+    graph.add_node("error_node", timed("error_node", error_node, metrics))
 
     graph.add_edge(START, "route_entry")
     graph.add_conditional_edges(
@@ -133,38 +136,39 @@ def build_answer_graph(agent, on_stage=None, checkpointer=None, streaming: bool 
     )
     graph.add_edge("commit_turn", END)
     graph.add_edge("error_node", END)
-    return graph.compile(checkpointer=checkpointer) if checkpointer else graph.compile()
+    app = graph.compile(checkpointer=checkpointer) if checkpointer else graph.compile()
+    return app, {"counters": counters, "metrics": metrics}
 
 
 def _prepare_run(agent, question: str, session_id: str, resume: bool, on_stage, streaming: bool = False, allow_web=None):
     """两次入口共用的运行准备：checkpointer 决策、thread 映射、输入构造（含恢复语义）。
 
-    返回 (app, config, graph_input, error)；error 非空时其余为 None。
+    返回 (app, run_ctx, config, graph_input, error)；error 非空时其余为 None。
     """
     if agent.config.get("retrieval.multi_query", False):
         LOG.warning("retrieval.multi_query=true 在 LangGraph 图路径暂不支持（Phase 0），本次按单查询执行")
     use_checkpoint = bool(session_id) or resume
     checkpointer = _get_checkpointer(agent) if use_checkpoint else None
-    app = build_answer_graph(agent, on_stage=on_stage, checkpointer=checkpointer, streaming=streaming, allow_web=allow_web)
+    app, run_ctx = build_answer_graph(agent, on_stage=on_stage, checkpointer=checkpointer, streaming=streaming, allow_web=allow_web)
     config = {"configurable": {"thread_id": session_id or f"adhoc-{uuid.uuid4()}"}}
 
     if resume:
         # LG-1.4：从最近 checkpoint 续跑，已完成节点不重跑；线程不存在时给出可读错误
         snapshot = app.get_state(config)
         if not snapshot or not snapshot.values:
-            return None, None, None, f"未找到可恢复的会话线程: {session_id or '(未提供 session_id)'}"
-        return app, config, None, ""
+            return None, None, None, None, f"未找到可恢复的会话线程: {session_id or '(未提供 session_id)'}"
+        return app, run_ctx, config, None, ""
     if use_checkpoint:
         pending = _extract_interrupt(app.get_state(config))
         if pending:
             LOG.info("会话存在挂起澄清，将本次提问作为澄清内容注入")
             from langgraph.types import Command
 
-            return app, config, Command(resume={"clarified_query": question}), ""
-    return app, config, {"question": question, "node_metrics": []}, ""
+            return app, run_ctx, config, Command(resume={"clarified_query": question}), ""
+    return app, run_ctx, config, {"question": question}, ""
 
 
-def _finalize_answer(answer: Answer, final: dict, agent, use_checkpoint: bool, app=None, config: dict | None = None) -> Answer:
+def _finalize_answer(answer: Answer, final: dict, agent, use_checkpoint: bool, app=None, config: dict | None = None, run_ctx: dict | None = None) -> Answer:
     """两次入口共用的收尾：final state → Answer（LG-2.2 节点指标随 Answer 暴露）。"""
     answer.plan = final.get("plan") or Plan()
     react_steps = final.get("steps") or []
@@ -178,14 +182,11 @@ def _finalize_answer(answer: Answer, final: dict, agent, use_checkpoint: bool, a
     answer.final_answer = final.get("draft", "")
     answer.citations_valid = final.get("citations_valid", 0)
     answer.citations_invalid = final.get("citations_invalid", 0)
-    answer.node_metrics = final.get("node_metrics") or []
-    # 计数与 legacy 同口径：改写(route) + 规划(plan) + 反思(reflect 内部自计) + 合成(1)
+    # 计数/耗时来自 build 级持有者（T-011 验收修正：不进图状态，跨轮零污染）
+    answer.node_metrics = list(run_ctx["metrics"]) if run_ctx else []
+    # 计数与 legacy 同口径：改写+规划+反思（build 级持有者）+ 合成(1)
     synth_called = 1 if (step is not None or final.get("draft")) else 0
-    answer.llm_calls = (
-        final.get("llm_call_count", 0)
-        + final.get("reflect_llm_calls", 0)
-        + synth_called
-    )
+    answer.llm_calls = (run_ctx["counters"]["llm_calls"] if run_ctx else 0) + synth_called
     if final.get("error"):
         answer.error = final["error"]
 
@@ -216,7 +217,7 @@ def get_pending_clarification(agent, session_id: str) -> dict:
     """
     if not session_id:
         return {}
-    app = build_answer_graph(agent, checkpointer=_get_checkpointer(agent))
+    app, _run_ctx = build_answer_graph(agent, checkpointer=_get_checkpointer(agent))
     config = {"configurable": {"thread_id": session_id}}
     return _extract_interrupt(app.get_state(config))
 
@@ -268,7 +269,7 @@ def run_graph_ask(
     answer = Answer(question=question)
     t0 = time.monotonic()
     try:
-        app, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage, allow_web=allow_web)
+        app, run_ctx, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage, allow_web=allow_web)
         if err:
             answer.error = err
             return _finish_meta(answer, agent, question, session_id, t0)
@@ -278,7 +279,7 @@ def run_graph_ask(
             for m in final["node_metrics"]:
                 print(f"  · [graph] {m['node']} {m['duration_ms']}ms")
         use_checkpoint = bool(session_id) or resume
-        _finalize_answer(answer, final, agent, use_checkpoint, app=app, config=config)
+        _finalize_answer(answer, final, agent, use_checkpoint, app=app, config=config, run_ctx=run_ctx)
     except ImportError as exc:
         answer.error = f"LangGraph 未安装：请执行 .venv/bin/pip install -r requirements-langgraph.txt（或保持 engine: legacy）。{exc}"
     except Exception as exc:  # noqa: BLE001 - 兜底：图外异常（组装/调用层）同样不让进程崩溃
@@ -310,7 +311,7 @@ def stream_graph_ask(
     answer = Answer(question=question)
     t0 = time.monotonic()
     try:
-        app, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage, streaming=True, allow_web=allow_web)
+        app, run_ctx, config, graph_input, err = _prepare_run(agent, question, session_id, resume, on_stage, streaming=True, allow_web=allow_web)
         if err:
             answer.error = err
             yield {"event": "_result", "answer": answer}
@@ -325,7 +326,7 @@ def stream_graph_ask(
             for m in final["node_metrics"]:
                 print(f"  · [graph] {m['node']} {m['duration_ms']}ms")
         use_checkpoint = bool(session_id) or resume
-        _finalize_answer(answer, final, agent, use_checkpoint, app=app, config=config)
+        _finalize_answer(answer, final, agent, use_checkpoint, app=app, config=config, run_ctx=run_ctx)
     except ImportError as exc:
         answer.error = f"LangGraph 未安装：请执行 .venv/bin/pip install -r requirements-langgraph.txt（或保持 engine: legacy）。{exc}"
     except Exception as exc:  # noqa: BLE001

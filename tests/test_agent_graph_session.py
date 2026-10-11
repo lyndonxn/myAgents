@@ -170,6 +170,30 @@ class SessionContinuityTests(unittest.TestCase):
             self.assertEqual(agent.llm.calls, 2)
             print("✓ 无 session_id 调用保持无状态（不落 checkpoint）")
 
+    def test_llm_calls_no_cross_turn_inflation(self):
+        """T-011 独立验收修正回归：llm_calls 持有者不随 Checkpointer 轮次累积。
+        3 轮会话应为 1（快路径）/ 4（改写+规划+反思+合成）/ 4，与 legacy 同口径。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "checkpoints.sqlite")
+            config = make_config(tmp, db)
+            llm = ContentRoutedLLM(
+                config,
+                rewrite="改写后的独立查询",
+                plan_json=json.dumps({
+                    "reasoning": "检索一步", "plan_summary": "单步检索",
+                    "steps": [{"action": "search_knowledge_base", "input": {"query": "RAG"}}],
+                }, ensure_ascii=False),
+                reflect_json=json.dumps({"need_more": False, "reasoning": "信息足够", "steps": []}, ensure_ascii=False),
+                synth="合成答案 [1]。",
+            )
+            agent = make_agent(config, llm)
+            counts = [
+                agent.ask(q, session_id="s5").llm_calls
+                for q in ("什么是 RAG？", "那父块呢？", "再讲讲叶子块")
+            ]
+            self.assertEqual(counts, [1, 4, 4], f"跨轮不得膨胀（修复前第 3 轮为 6）: {counts}")
+            print("✓ 3 轮会话 llm_calls = 1/4/4（无跨轮累积，legacy 同口径）")
+
 
 @unittest.skipUnless(HAS_LANGGRAPH, "langgraph 未安装（可选依赖）")
 class ClarifyInterruptTests(unittest.TestCase):
@@ -220,7 +244,7 @@ class ClarifyInterruptTests(unittest.TestCase):
         from langgraph.types import Command
 
         self._empty_index()
-        graph = build_answer_graph(self.agent, checkpointer=_get_checkpointer(self.agent))
+        graph, _run_ctx = build_answer_graph(self.agent, checkpointer=_get_checkpointer(self.agent))
         config = {"configurable": {"thread_id": "s3"}}
         first = graph.invoke({"question": "不相关问题", "node_metrics": []}, config)
         self.assertTrue(first.get("__interrupt__"))
