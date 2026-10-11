@@ -22,7 +22,8 @@
 - A/B 框架（LG-2.3）：benchmark `--engine` 参数 + retrieval-only 按 engine 选路径；**免费档实测（vault 26 题）：命中率两侧完全一致（文件 96.2%/章节 80.8%），图路径延迟更低（p50 25ms vs 28ms，并行扇出收益）**，快照 `benchmark/results-lg-phase2-ab-retrieval-2026-10-11-{legacy,langgraph}.txt`。
 - 回归抓出并修复一个真 bug：并行分支同时失败时都写 error → InvalidUpdateError（错误处理自身崩溃）→ `error` 键加 `_first_error` 归并 reducer（C5 增强）。
 - 测试：`tests/test_agent_graph_stream.py` 4 项 + 全套 **218 绿**（214+4）；T4 契约测试显式锁定 `--engine legacy`（对环境 runtime.json 免疫）。
-- 待决（D2）：付费完整 A/B（~100 题 × 2 引擎，预估 < ¥1）→ LG-2.4 报告 + LG-2.5 简历/README 回写。
+- 待决（D2）：~~付费完整 A/B~~ **已按用户授权范围执行（5 题冒烟口径，2026-10-11 21:20-21:21）**：质量指标逐题完全一致（来源命中 100%、引用幻觉 0%、kw 逐题相同），图引擎 p50 3.8s vs legacy 12.7s、总成本 ¥0.0245→¥0.0113（-54%，单发路径跳过规划器——公平性说明见报告）。报告已写知识库 `项目/MyAgents LangGraph 迁移 A/B（2026-10-11）.md`；题集与双侧原始数据入库（a212584）。完整 100 题 A/B 留待用户需要时按同框架执行。
+- 全部交付完成：Phase 0/1/2 三阶段收官（b9c3cba → e7374fc → 5ad0fd6/a2cf1d0/a212584）。后续候选：澄清的专用 Web 端点、ReAct 子图（Phase 3 评审）、langgraph 升级前 serde 复核。
 
 **Phase 1 已完成（2026-10-11，LG-ACC-004/005/006 全绿，独立验收 4/4 pass）**——规格 `spec/langgraph-phase1.md`：
 
