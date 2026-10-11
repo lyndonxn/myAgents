@@ -3,7 +3,7 @@
 分支：`feature/agent-core-modules`（起点 9ee2763）。推送状态：**已推送**（2026-09-05 用户授权，`9e6791f..a7489b9 main -> main`，共 41 提交含 W1–W8 与 Next.js 迁移全部工作；推送前已做密钥快扫）。
 规格：`spec/agent-core-modules.md`（S 阶段 + T 阶段）。契约：`AGENTS.md`。
 
-## 进行中：第二轮（spec/09：MCP vault-mcp + LangGraph Phase 3）——**三切片 DONE，独立验收 7/7 pass，分支 `feat/mcp-vault-phase3` 已推送待合并**（230 测试绿）
+## 进行中：第二轮（spec/09：MCP vault-mcp + LangGraph Phase 3）——**三切片 DONE，独立验收 7/7 pass，已合入 main 并推送**（`601fe19..63114aa` fast-forward，230 测试合并后复验全绿；分支 `feat/mcp-vault-phase3` 保留）
 
 - **T-009 vault-mcp（18d6987）**：按知识库《MCP Server 开发实战》设计实现三工具本地 stdio Server——`search_notes`（复用混合检索，零复制）/ `get_decisions`（决策记录，单篇 4000 字上限）/ `log_digestion`（C7：note_path 越界拒绝【验收实测 10 种路径变体含 symlink】+ 唯一 digest 白名单文件 + 审计事件）。FastMCP 4.1.0 opt-in（requirements-mcp.txt）；入口 `PYTHONPATH=src python -m agents.mcp_server`（stdio 握手经子协议冒烟验证）。
 - **T-010 澄清端点（4f6a6f3）**：`/api/clarify`（引擎/428/409 NO_PENDING 守卫，守卫与恢复同锁消除 TOCTOU，MAX_QUESTION_LEN 上限）；`pending_clarification` 入 payload（ACC-T1-03 契约加法演进）；流式 `clarify` 事件。
